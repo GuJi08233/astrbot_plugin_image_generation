@@ -13,6 +13,7 @@ import time
 from collections.abc import Coroutine
 from typing import Any
 
+import astrbot.api.message_components as Comp
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star
@@ -164,6 +165,55 @@ class ImageGenerationPlugin(Star):
         """创建后台任务并添加到管理器中。"""
         return self.task_manager.create_task(coro)
 
+    def _build_reply_context(
+        self, event: AstrMessageEvent | None
+    ) -> dict[str, Any] | None:
+        """提取原消息的引用信息，供主动回消息时继续引用。"""
+        if not event or not getattr(event, "message_obj", None):
+            return None
+
+        message_obj = event.message_obj
+        message_id = getattr(message_obj, "message_id", None)
+        if not message_id:
+            return None
+
+        reply_context: dict[str, Any] = {"id": message_id}
+
+        message_chain = getattr(message_obj, "message", None)
+        if message_chain:
+            reply_context["chain"] = list(message_chain)
+
+        sender_id = getattr(message_obj, "sender_id", None)
+        if sender_id is not None:
+            reply_context["sender_id"] = str(sender_id)
+
+        sender_nickname = getattr(message_obj, "sender_nickname", None)
+        if sender_nickname:
+            reply_context["sender_nickname"] = sender_nickname
+
+        message_str = (event.message_str or "").strip()
+        if message_str:
+            reply_context["message_str"] = message_str
+
+        message_time = getattr(message_obj, "time", None)
+        if message_time is not None:
+            reply_context["time"] = message_time
+
+        return reply_context
+
+    def _prepend_reply_context(
+        self, chain: MessageChain, reply_context: dict[str, Any] | None
+    ) -> MessageChain:
+        """在主动发送的消息链前插入引用回复组件。"""
+        if not reply_context:
+            return chain
+
+        try:
+            chain.chain.insert(0, Comp.Reply(**reply_context))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[ImageGen] 构造引用回复失败，将退化为普通消息: {exc}")
+        return chain
+
     # ---------------------- 核心生图逻辑 ----------------------
 
     async def _generate_and_send_image_async(
@@ -174,6 +224,7 @@ class ImageGenerationPlugin(Star):
         aspect_ratio: str = "1:1",
         resolution: str = "1K",
         task_id: str | None = None,
+        reply_context: dict[str, Any] | None = None,
     ) -> None:
         """异步生成图片并发送。"""
         if not self.generator or not self.generator.adapter:
@@ -218,13 +269,25 @@ class ImageGenerationPlugin(Star):
         # 使用信号量控制并发
         if self.semaphore is None:
             await self._do_generate_and_send(
-                prompt, unified_msg_origin, images, final_ar, final_res, task_id
+                prompt,
+                unified_msg_origin,
+                images,
+                final_ar,
+                final_res,
+                task_id,
+                reply_context,
             )
             return
 
         async with self.semaphore:
             await self._do_generate_and_send(
-                prompt, unified_msg_origin, images, final_ar, final_res, task_id
+                prompt,
+                unified_msg_origin,
+                images,
+                final_ar,
+                final_res,
+                task_id,
+                reply_context,
             )
 
     async def _do_generate_and_send(
@@ -235,6 +298,7 @@ class ImageGenerationPlugin(Star):
         aspect_ratio: str | None,
         resolution: str | None,
         task_id: str,
+        reply_context: dict[str, Any] | None = None,
     ) -> None:
         """执行生成逻辑并发送结果。"""
         start_time = time.time()
@@ -257,9 +321,11 @@ class ImageGenerationPlugin(Star):
             logger.error(
                 f"[ImageGen] 任务 {task_id} 生成失败，耗时: {duration:.2f}s, 错误: {result.error}"
             )
+            error_chain = MessageChain().message(f"❌ 生成失败: {result.error}")
+            self._prepend_reply_context(error_chain, reply_context)
             await self.context.send_message(
                 unified_msg_origin,
-                MessageChain().message(f"❌ 生成失败: {result.error}"),
+                error_chain,
             )
             return
 
@@ -299,6 +365,7 @@ class ImageGenerationPlugin(Star):
         if info_parts:
             chain.message("\n" + "\n".join(info_parts))
 
+        self._prepend_reply_context(chain, reply_context)
         await self.context.send_message(unified_msg_origin, chain)
 
 
@@ -392,6 +459,7 @@ class ImageGenerationPlugin(Star):
         yield event.plain_result(msg)
 
         task_id = hashlib.md5(f"{time.time()}{user_id}".encode()).hexdigest()[:8]
+        reply_context = self._build_reply_context(event)
 
         self.create_background_task(
             self._generate_and_send_image_async(
@@ -401,6 +469,7 @@ class ImageGenerationPlugin(Star):
                 aspect_ratio=aspect_ratio,
                 resolution=resolution,
                 task_id=task_id,
+                reply_context=reply_context,
             )
         )
 

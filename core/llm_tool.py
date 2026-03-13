@@ -169,6 +169,7 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
         task_id = hashlib.md5(
             f"{time.time()}{event.unified_msg_origin}".encode()
         ).hexdigest()[:8]
+        reply_context = plugin._build_reply_context(event)
 
         # 创建后台任务进行生图
         plugin.create_background_task(
@@ -181,6 +182,7 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
                 resolution=kwargs.get("resolution")
                 or plugin.config_manager.default_resolution,
                 task_id=task_id,
+                reply_context=reply_context,
             )
         )
 
