@@ -214,6 +214,40 @@ class ImageGenerationPlugin(Star):
             logger.warning(f"[ImageGen] 构造引用回复失败，将退化为普通消息: {exc}")
         return chain
 
+    def _summarize_source_message(
+        self,
+        source_event: AstrMessageEvent | None,
+        prompt: str,
+        max_length: int = 48,
+    ) -> str:
+        """生成用于任务追踪的原消息摘要。"""
+        text = ""
+        if source_event is not None:
+            text = (source_event.message_str or "").strip()
+        if not text:
+            text = prompt.strip()
+
+        text = " ".join(text.split())
+        if len(text) > max_length:
+            return text[: max_length - 3] + "..."
+        return text
+
+    def _prepend_task_trace(
+        self,
+        chain: MessageChain,
+        task_id: str,
+        source_event: AstrMessageEvent | None,
+        prompt: str,
+    ) -> MessageChain:
+        """在消息顶部添加任务追踪信息，便于多任务场景下对应。"""
+        summary = self._summarize_source_message(source_event, prompt)
+        trace_lines = [f"🆔 任务ID: {task_id}"]
+        if summary:
+            trace_lines.insert(0, f"↪ 原消息: {summary}")
+
+        chain.chain.insert(0, Comp.Plain("\n".join(trace_lines) + "\n"))
+        return chain
+
     async def _send_followup_message(
         self,
         unified_msg_origin: str,
@@ -344,6 +378,7 @@ class ImageGenerationPlugin(Star):
                 f"[ImageGen] 任务 {task_id} 生成失败，耗时: {duration:.2f}s, 错误: {result.error}"
             )
             error_chain = MessageChain().message(f"❌ 生成失败: {result.error}")
+            self._prepend_task_trace(error_chain, task_id, source_event, prompt)
             await self._send_followup_message(
                 unified_msg_origin, error_chain, source_event
             )
@@ -385,6 +420,7 @@ class ImageGenerationPlugin(Star):
         if info_parts:
             chain.message("\n" + "\n".join(info_parts))
 
+        self._prepend_task_trace(chain, task_id, source_event, prompt)
         await self._send_followup_message(unified_msg_origin, chain, source_event)
 
 
@@ -470,14 +506,15 @@ class ImageGenerationPlugin(Star):
         ):
             images_data = await self.image_processor.fetch_images_from_event(event)
 
-        msg = "已开始生图任务"
+        task_id = hashlib.md5(f"{time.time()}{user_id}".encode()).hexdigest()[:8]
+
+        msg = f"已开始生图任务 (任务ID: {task_id})"
         if images_data:
             msg += f"[{len(images_data)}张参考图]"
         if matched_preset:
             msg += f"[预设: {matched_preset}]"
         yield event.plain_result(msg)
 
-        task_id = hashlib.md5(f"{time.time()}{user_id}".encode()).hexdigest()[:8]
         self.create_background_task(
             self._generate_and_send_image_async(
                 prompt=prompt,
