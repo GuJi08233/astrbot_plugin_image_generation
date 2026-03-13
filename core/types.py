@@ -9,6 +9,7 @@ class AdapterType(str, enum.Enum):
 
     GEMINI = "gemini"
     GEMINI_OPENAI = "gemini_openai"
+    OPENAI_CHAT = "openai_chat"
     OPENAI = "openai"
     Z_IMAGE = "z_image_gitee"
     JIMENG2API = "jimeng2api"

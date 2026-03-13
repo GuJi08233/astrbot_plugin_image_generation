@@ -127,6 +127,44 @@
           }
         }
       },
+      "openai_chat": {
+        "name": "OpenAI Chat流式接口",
+        "hint": "使用 /v1/chat/completions 的流式生图接口，要求在流中返回图片 URL",
+        "items": {
+          "name": {
+            "description": "适配器名称",
+            "hint": "用于区分不同适配器的名称,生图模型格式为 '适配器名称/模型名称'",
+            "type": "string",
+            "default": ""
+          },
+          "base_url": {
+            "description": "API Base URL",
+            "hint": "例如: http://localhost:8000",
+            "type": "string",
+            "default": ""
+          },
+          "proxy": {
+            "description": "代理地址",
+            "hint": "例如: http://127.0.0.1:7890",
+            "type": "string",
+            "default": ""
+          },
+          "api_keys": {
+            "description": "API Keys",
+            "hint": "用于 Authorization: Bearer <token>",
+            "type": "list",
+            "default": []
+          },
+          "available_models": {
+            "description": "可用模型列表",
+            "hint": "用于 /生图模型 命令切换时的可选模型。",
+            "type": "list",
+            "default": [
+              "gemini-3.1-flash-image-landscape"
+            ]
+          }
+        }
+      },
       "z_image_gitee": {
         "name": "Z-Image (Gitee) 接口",
         "hint": "使用Gitee的 Z-Image 图像生成接口",

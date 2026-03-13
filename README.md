@@ -41,6 +41,7 @@
 | :-------------- | :----: | :----: | :----: | :----: | :-------------------------------------------------------------------- |
 | `gemini`        |   ✅    |   ✅    |   ✅    |   ✅    | Gemini 原生 API                                                       |
 | `gemini_openai` |   ✅    |   ✅    |   ❌    |   ❌    | OpenAI 兼容格式的 Gemini 接口                                         |
+| `openai_chat`   |   ✅    |   ✅    |   ❌    |   ❌    | OpenAI Chat Completions 流式接口，流中返回图片 URL                    |
 | `openai`        |   ✅    |   ❌    |   ❌    |   ✅    | OpenAI DALL-E 3                                                       |
 | `z_image_gitee` |   ✅    |   ❌    |   ✅    |   ✅    | Gitee AI (z-image-turbo)                                              |
 | `jimeng2api`    |   ✅    |   ✅    |   ✅    |   ✅    | 适用于[iptag/jimeng-api](https://github.com/iptag/jimeng-api)的适配器 |
@@ -48,6 +49,7 @@
 #### 特殊说明
   - 配置了jimeng2api的话，会在每次启动时和每天凌晨自动领取积分(仅限直接连接即梦逆向,中转途径没有对应接口)
   - jimeng逆向使用了/v1/images/compositions接口,使用中转会导致图生图失败
+  - `openai_chat` 适配器强制使用 `stream=true`，会从 SSE 流中提取 `.jpg/.jpeg/.png/.webp` 图片 URL；如果流中没有图片 URL，则判定生图失败
 #### 欢迎提交 Issue/PR 添加新的适配器类型
 
 ### 配置项
@@ -127,6 +129,59 @@
 /生图模型        # 查看列表
 /生图模型 2      # 切换到第二个模型
 ```
+
+#### OpenAI Chat 流式接口示例
+
+文生图：
+```bash
+curl -X POST "http://localhost:8000/v1/chat/completions" \
+  -H "Authorization: Bearer han1234" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-3.1-flash-image-landscape",
+    "messages": [
+      {
+        "role": "user",
+        "content": "一只可爱的猫咪在花园里玩耍"
+      }
+    ],
+    "stream": true
+  }'
+```
+
+图生图：
+```bash
+curl -X POST "http://localhost:8000/v1/chat/completions" \
+  -H "Authorization: Bearer han1234" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-3.1-flash-image-landscape",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "将这张图片变成水彩画风格"
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "data:image/jpeg;base64,<base64_encoded_image>"
+            }
+          }
+        ]
+      }
+    ],
+    "stream": true
+  }'
+```
+
+返回约定：
+
+- 流式响应中需要出现图片 URL，例如 `https://flow.guji.uno/tmp/0b49ccff4736ed61c93da3fb241741bd.jpg`
+- 插件会自动下载 URL 对应图片并发送
+- 如果整个流中没有检测到图片 URL，则视为生图失败
 
 ### 更新日志
 

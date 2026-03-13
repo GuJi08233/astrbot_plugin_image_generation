@@ -6,6 +6,7 @@ from ..adapter import (
     GeminiAdapter,
     GeminiOpenAIAdapter,
     Jimeng2APIAdapter,
+    OpenAIChatAdapter,
     OpenAIAdapter,
     ZImageAdapter,
 )
@@ -31,6 +32,7 @@ class ImageGenerator:
         adapter_map: dict[AdapterType, type] = {
             AdapterType.GEMINI: GeminiAdapter,
             AdapterType.GEMINI_OPENAI: GeminiOpenAIAdapter,
+            AdapterType.OPENAI_CHAT: OpenAIChatAdapter,
             AdapterType.OPENAI: OpenAIAdapter,
             AdapterType.Z_IMAGE: ZImageAdapter,
             AdapterType.JIMENG2API: Jimeng2APIAdapter,
