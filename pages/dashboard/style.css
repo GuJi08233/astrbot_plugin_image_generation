@@ -1098,6 +1098,33 @@ textarea:focus {
   color: var(--error);
 }
 
+.audit-test-panel {
+  margin-top: 18px;
+}
+
+.audit-test-hint {
+  color: var(--text-muted);
+  margin: 0 0 14px;
+  line-height: 1.6;
+}
+
+.audit-test-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+@media (max-width: 900px) {
+  .audit-test-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.audit-test-result {
+  margin-top: 4px;
+}
+
 .info-list {
   display: grid;
   gap: 10px;

@@ -112,6 +112,20 @@ const FALLBACK = {
   'audit.passed': '通过',
   'audit.flagged': '服务端标记违规 (flagged)',
   'audit.hits': '命中规则',
+  'audit.testEyebrow': 'Audit',
+  'audit.testTitle': '审核测试',
+  'audit.testRun': '运行测试',
+  'audit.testRunning': '测试中...',
+  'audit.testHint': '按当前安全审核配置直接测试，不生成图片、不产生任务记录。提示词和图片可以只填其中一项。',
+  'audit.testPrompt': '测试提示词',
+  'audit.testPromptPlaceholder': '输入要测试的提示词，留空则跳过提示词审核。',
+  'audit.testImage': '测试图片',
+  'audit.testImageHint': '上传图片后按当前配置执行 Moderation / AI 图片审核。',
+  'audit.testEmpty': '请先填写测试提示词或上传测试图片',
+  'audit.promptResult': '提示词审核',
+  'audit.imageResult': '图片审核',
+  'audit.testDisabledPrompt': '提示词审核未启用（无屏蔽词且未开启 AI 提示词审核），任何提示词都会通过。',
+  'audit.testDisabledImage': '图片审核未启用（Moderation 接口审核与 AI 图片审核均关闭），任何图片都会通过。',
   'message.stateLoaded': '状态已刷新',
   'message.taskSubmitted': '任务已提交',
   'message.uploaded': '参考图已上传',
@@ -166,6 +180,8 @@ const appState = {
   lightbox: { open: false, src: '', title: '', downloadEndpoint: '', downloadName: '', taskId: '' },
   previewCache: {},
   uploads: [],
+  auditUploads: [],
+  auditTesting: false,
   currentView: 'overview',
   loadingTasks: false,
   loadingGallery: false,
@@ -1652,6 +1668,105 @@ async function submitTask(event) {
   }
 }
 
+function renderAuditUploads() {
+  const list = $('#auditTestUploadList');
+  if (!list) return;
+  list.innerHTML = appState.auditUploads
+    .map(
+      (item, index) => `<span class="upload-pill">
+        <strong>${escapeHtml(item.filename)}</strong>
+        <small>${escapeHtml(formatBytes(item.size))}</small>
+        <button type="button" data-audit-upload-remove="${index}" aria-label="Remove">×</button>
+      </span>`,
+    )
+    .join('');
+}
+
+async function uploadAuditImages(files) {
+  if (!files.length) return;
+  const input = $('#auditTestImageInput');
+  if (input) input.disabled = true;
+  showToast(t('uploading'));
+  try {
+    for (const file of files) {
+      const result = await appState.bridge.upload('page/reference/upload', file);
+      if (result?.status === 'error') throw new Error(result.message || t('error.generic'));
+      appState.auditUploads.push(result);
+    }
+    renderAuditUploads();
+    showToast(t('message.uploaded'));
+  } catch (error) {
+    showToast(error.message || t('error.generic'), true);
+  } finally {
+    if (input) {
+      input.value = '';
+      input.disabled = false;
+    }
+  }
+}
+
+function renderAuditTestResult(result) {
+  const panel = $('#auditTestResult');
+  if (!panel) return;
+  const enabled = result.enabled || {};
+  const sections = [];
+  const verdictBlock = (labelKey, verdict) => {
+    const blocked = !verdict.allowed;
+    return `<div class="audit-card ${blocked ? 'is-blocked' : ''}">
+      <div class="audit-card-head">
+        <strong>${escapeHtml(t(labelKey))}</strong>
+        <span class="badge ${blocked ? 'failed' : 'succeeded'}">${escapeHtml(blocked ? t('audit.blocked') : t('audit.passed'))}</span>
+      </div>
+      <small class="audit-note">${escapeHtml(verdict.reason || '')}</small>
+    </div>`;
+  };
+  if (result.prompt_audit) {
+    sections.push(verdictBlock('audit.promptResult', result.prompt_audit));
+    if (!enabled.prompt_blocked_words && !enabled.prompt_ai) {
+      sections.push(`<small class="audit-note">${escapeHtml(t('audit.testDisabledPrompt'))}</small>`);
+    }
+  }
+  if (result.image_audit) {
+    sections.push(verdictBlock('audit.imageResult', result.image_audit));
+    if (!enabled.image_moderation && !enabled.image_ai) {
+      sections.push(`<small class="audit-note">${escapeHtml(t('audit.testDisabledImage'))}</small>`);
+    }
+    sections.push(renderAuditResults({ audit_results: result.image_audit.audit_results }));
+  }
+  panel.innerHTML = `<div class="audit-grid audit-test-result">${sections.join('')}</div>`;
+}
+
+async function runAuditTest() {
+  const prompt = String($('#auditTestPrompt')?.value || '').trim();
+  const tokens = appState.auditUploads.map((item) => item.token);
+  if (!prompt && !tokens.length) {
+    showToast(t('audit.testEmpty'), true);
+    return;
+  }
+  if (appState.auditTesting) return;
+  appState.auditTesting = true;
+  const button = $('#auditTestBtn');
+  if (button) {
+    button.disabled = true;
+    button.textContent = t('audit.testRunning');
+  }
+  try {
+    const result = await apiPost('page/audit/test', {
+      prompt,
+      reference_tokens: tokens,
+    });
+    renderAuditTestResult(result);
+  } catch (error) {
+    showToast(error.message || t('error.generic'), true);
+  } finally {
+    appState.auditTesting = false;
+    if (button) {
+      button.disabled = false;
+      button.textContent = t('audit.testRun');
+    }
+  }
+}
+
 async function uploadReferences(files) {
   if (!files.length) return;
   const input = $('#referenceInput');
@@ -1872,6 +1987,16 @@ function bindEvents() {
     appState.uploads.splice(Number(index), 1);
     renderUploads();
   });
+  $('#auditTestImageInput')?.addEventListener('change', (event) =>
+    uploadAuditImages(Array.from(event.target.files || [])),
+  );
+  $('#auditTestUploadList')?.addEventListener('click', (event) => {
+    const index = event.target?.dataset?.auditUploadRemove;
+    if (index === undefined) return;
+    appState.auditUploads.splice(Number(index), 1);
+    renderAuditUploads();
+  });
+  $('#auditTestBtn')?.addEventListener('click', () => runAuditTest());
   document.querySelectorAll('.tab-btn').forEach((button) => {
     button.addEventListener('click', () => setView(button.dataset.view));
   });

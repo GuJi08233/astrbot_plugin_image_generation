@@ -204,6 +204,37 @@
               </div>
             </section>
           </div>
+
+          <section class="dashboard-card dashboard-card--padded audit-test-panel" id="auditTestPanel">
+            <div class="section-heading">
+              <div>
+                <p class="section-eyebrow" data-i18n="audit.testEyebrow">Audit</p>
+                <h2 data-i18n="audit.testTitle">审核测试</h2>
+              </div>
+              <button class="btn primary" id="auditTestBtn" type="button" data-i18n="audit.testRun">运行测试</button>
+            </div>
+            <p class="audit-test-hint" data-i18n="audit.testHint">按当前安全审核配置直接测试，不生成图片、不产生任务记录。提示词和图片可以只填其中一项。</p>
+            <div class="audit-test-grid">
+              <label class="field" for="auditTestPrompt">
+                <span data-i18n="audit.testPrompt">测试提示词</span>
+                <textarea
+                  id="auditTestPrompt"
+                  rows="4"
+                  data-i18n-placeholder="audit.testPromptPlaceholder"
+                  placeholder="输入要测试的提示词，留空则跳过提示词审核。"
+                ></textarea>
+              </label>
+              <div class="field upload-card">
+                <div>
+                  <span data-i18n="audit.testImage">测试图片</span>
+                  <small data-i18n="audit.testImageHint">上传图片后按当前配置执行 Moderation / AI 图片审核。</small>
+                </div>
+                <input id="auditTestImageInput" type="file" accept="image/*" multiple />
+                <div class="upload-list" id="auditTestUploadList"></div>
+              </div>
+            </div>
+            <div id="auditTestResult"></div>
+          </section>
         </section>
 
         <section class="view-panel" id="view-tasks" data-view-panel="tasks">

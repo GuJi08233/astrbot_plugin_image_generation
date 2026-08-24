@@ -103,6 +103,12 @@ class ImageGenerationPageAPI:
                 ["POST"],
                 "Submit image generation task from Page",
             ),
+            (
+                "/page/audit/test",
+                self.page_test_audit,
+                ["POST"],
+                "Test safety audit from Page",
+            ),
         ]
         for route, handler, methods, description in page_routes:
             self.plugin.context.register_web_api(
@@ -962,6 +968,64 @@ class ImageGenerationPageAPI:
                 "models": sorted(model_names),
             }
         )
+
+    async def page_test_audit(self):
+        """Run prompt / image audits against current config for admin testing.
+
+        Returns:
+            A JSON response with audit verdicts and per-image audit details.
+        """
+        plugin = self.plugin
+        payload = await request.json(default={})
+        if not isinstance(payload, dict):
+            return error_response("请求体必须是 JSON 对象", status_code=400)
+        prompt = str(payload.get("prompt") or "").strip()
+        upload_tokens = payload.get("reference_tokens") or []
+        image_paths = [
+            str(path)
+            for token in upload_tokens
+            if (path := self._uploaded_image_path(str(token)))
+        ]
+        if not prompt and not image_paths:
+            return error_response("请至少提供测试提示词或测试图片", status_code=400)
+
+        settings = plugin.config_manager.safety_audit_settings
+        # Fixed test origin: never whitelisted by accident, so audits really run.
+        test_origin = "webui:audit-test"
+        response: dict[str, Any] = {
+            "enabled": {
+                "prompt_blocked_words": bool(settings.prompt_audit.blocked_words),
+                "prompt_ai": settings.prompt_audit.enable_ai_audit,
+                "image_moderation": settings.image_audit.enable_moderation_audit,
+                "image_ai": settings.image_audit.enable_ai_audit,
+            },
+            "prompt_audit": None,
+            "image_audit": None,
+        }
+        if prompt:
+            allowed, reason = await plugin.safety_auditor.audit_prompt(
+                prompt, test_origin
+            )
+            response["prompt_audit"] = {
+                "allowed": allowed,
+                "reason": reason or ("审核通过" if allowed else "审核未通过"),
+            }
+        if image_paths:
+            (
+                allowed,
+                reason,
+                audit_results,
+            ) = await plugin.safety_auditor.audit_generated_images(
+                prompt=prompt,
+                image_paths=image_paths,
+                unified_msg_origin=test_origin,
+            )
+            response["image_audit"] = {
+                "allowed": allowed,
+                "reason": reason or ("审核通过" if allowed else "审核未通过"),
+                "audit_results": audit_results,
+            }
+        return json_response(response)
 
     async def page_upload_reference(self):
         """Upload and validate one reference image for Page generation.
