@@ -58,6 +58,15 @@ DEFAULT_NON_RETRYABLE_ERROR_KEYWORDS = (
 DEFAULT_AUDIT_MAX_RETRY_ATTEMPTS = 3
 """Default maximum audit model retry attempts."""
 
+DEFAULT_MODERATION_API_BASE = "https://ai.gitee.com/v1"
+"""Default OpenAI-compatible moderation API base URL."""
+
+DEFAULT_MODERATION_MODEL = "nsfw-classifier"
+"""Default moderation model name."""
+
+DEFAULT_MODERATION_TIMEOUT_SECONDS = 60
+"""Default moderation API request timeout in seconds."""
+
 UNSPECIFIED_OPTION = "不指定"
 """Config option that means the request should omit the parameter."""
 

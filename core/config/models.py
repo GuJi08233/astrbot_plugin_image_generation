@@ -21,6 +21,8 @@ from ..shared.constants import (
     DEFAULT_MAX_IMAGES_PER_MESSAGE,
     DEFAULT_MAX_QUEUED_GENERATION_TASKS,
     DEFAULT_MAX_RUNNING_GENERATION_TASKS,
+    DEFAULT_MODERATION_API_BASE,
+    DEFAULT_MODERATION_MODEL,
     DEFAULT_NON_RETRYABLE_ERROR_KEYWORDS,
     DEFAULT_NON_RETRYABLE_STATUS_CODES,
     DEFAULT_PROMPT_AUDIT_PROMPT,
@@ -100,6 +102,12 @@ class PromptAuditSettings:
 class ImageAuditSettings:
     """Post-generation image audit settings."""
 
+    enable_moderation_audit: bool = False
+    moderation_api_base: str = DEFAULT_MODERATION_API_BASE
+    moderation_api_key: str = ""
+    moderation_model: str = DEFAULT_MODERATION_MODEL
+    moderation_blocked_categories: list[str] = field(default_factory=list)
+    moderation_proxy: str = ""
     enable_ai_audit: bool = False
     ai_provider_id: str = ""
     max_retry_attempts: int = DEFAULT_AUDIT_MAX_RETRY_ATTEMPTS

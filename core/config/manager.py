@@ -311,6 +311,20 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
     def _parse_image_audit_settings(self, cfg: dict[str, Any]) -> ImageAuditSettings:
         """Parse image audit settings."""
         return ImageAuditSettings(
+            enable_moderation_audit=self._get_bool(
+                cfg, "enable_moderation_audit", False
+            ),
+            moderation_api_base=self._get_str(
+                cfg, "moderation_api_base", ImageAuditSettings.moderation_api_base
+            ),
+            moderation_api_key=self._get_str(cfg, "moderation_api_key", ""),
+            moderation_model=self._get_str(
+                cfg, "moderation_model", ImageAuditSettings.moderation_model
+            ),
+            moderation_blocked_categories=self._parse_string_list(
+                cfg.get("moderation_blocked_categories", [])
+            ),
+            moderation_proxy=self._get_str(cfg, "moderation_proxy", ""),
             enable_ai_audit=self._get_bool(cfg, "enable_ai_audit", False),
             ai_provider_id=self._get_str(cfg, "ai_provider_id", ""),
             max_retry_attempts=self._get_int(

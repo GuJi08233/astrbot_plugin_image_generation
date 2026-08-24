@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import re
+from pathlib import Path
+
+import aiohttp
 
 from astrbot.api import logger
 from astrbot.api.star import Context
 
 from ..config.manager import ConfigManager
+from ..config.models import ImageAuditSettings
+from ..shared.constants import DEFAULT_MODERATION_TIMEOUT_SECONDS
 from ..shared.logging import log_prefix, safe_log_text
 
 LOG = log_prefix("SafetyAudit")
@@ -62,6 +68,14 @@ class SafetyAuditor:
             return True, ""
 
         settings = self._config_manager.safety_audit_settings.image_audit
+
+        if settings.enable_moderation_audit:
+            allowed, reason = await self._audit_with_moderation_api(
+                image_paths, settings
+            )
+            if not allowed:
+                return False, reason
+
         if not settings.enable_ai_audit:
             return True, ""
 
@@ -177,6 +191,210 @@ class SafetyAuditor:
     def _is_retryable_audit_reason(self, reason: str) -> bool:
         """Return whether an audit result should be retried."""
         return reason.startswith("安全审核异常：")
+
+    async def _audit_with_moderation_api(
+        self,
+        image_paths: list[str],
+        settings: ImageAuditSettings,
+    ) -> tuple[bool, str]:
+        if not image_paths:
+            return True, ""
+
+        api_key = settings.moderation_api_key.strip()
+        if not api_key:
+            msg = "安全审核异常：未配置 Moderation API 密钥"
+            logger.warning(f"{LOG} {msg}")
+            return False, msg
+
+        url = settings.moderation_api_base.strip().rstrip("/") + "/moderations"
+        model = settings.moderation_model.strip()
+        proxy = settings.moderation_proxy.strip() or None
+        rules = self._parse_moderation_rules(settings.moderation_blocked_categories)
+        total = len(image_paths)
+
+        # Gitee AI 的 /moderations 每次请求只接受一张图片，逐张审核。
+        for index, path in enumerate(image_paths, start=1):
+            try:
+                data_uri = self._image_file_to_data_uri(path)
+            except OSError as exc:
+                msg = f"安全审核异常：读取待审核图片失败 - {str(exc)[:180]}"
+                logger.warning(f"{LOG} {msg}")
+                return False, msg
+
+            payload: dict[str, object] = {
+                "model": model,
+                "input": [{"type": "image_url", "image_url": {"url": data_uri}}],
+            }
+            position = f"第 {index} 张图片" if total > 1 else "图片"
+            allowed, reason = await self._moderate_single_image(
+                url=url,
+                api_key=api_key,
+                payload=payload,
+                proxy=proxy,
+                max_retry_attempts=settings.max_retry_attempts,
+                rules=rules,
+                position=position,
+            )
+            if not allowed:
+                return False, reason
+        return True, "审核通过"
+
+    async def _moderate_single_image(
+        self,
+        *,
+        url: str,
+        api_key: str,
+        payload: dict[str, object],
+        proxy: str | None,
+        max_retry_attempts: int,
+        rules: list[tuple[str, float | None]],
+        position: str,
+    ) -> tuple[bool, str]:
+        attempts = max(1, max_retry_attempts)
+        last_reason = "安全审核异常：Moderation 接口未返回结果"
+        for attempt in range(1, attempts + 1):
+            try:
+                response = await self._post_moderation(url, api_key, payload, proxy)
+                hits = self._parse_moderation_result(response, rules)
+                if hits:
+                    return False, f"{position}命中 Moderation 拦截: {', '.join(hits)}"
+                return True, "审核通过"
+            except Exception as exc:
+                last_reason = (
+                    f"安全审核异常：Moderation 接口调用失败 - {str(exc)[:180]}"
+                )
+                if attempt < attempts:
+                    logger.warning(
+                        f"{LOG} Moderation 审核失败，准备重试: {attempt}/{attempts}，"
+                        f"错误={safe_log_text(str(exc), 160)}"
+                    )
+                    continue
+                logger.warning(f"{LOG} {last_reason}", exc_info=True)
+        return False, last_reason
+
+    async def _post_moderation(
+        self,
+        url: str,
+        api_key: str,
+        payload: dict[str, object],
+        proxy: str | None,
+    ) -> dict[str, object]:
+        timeout = aiohttp.ClientTimeout(total=DEFAULT_MODERATION_TIMEOUT_SECONDS)
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                url, json=payload, headers=headers, proxy=proxy
+            ) as resp:
+                body = await resp.text()
+                if resp.status != 200:
+                    raise RuntimeError(f"HTTP {resp.status}: {body[:160]}")
+        data = json.loads(body)
+        if not isinstance(data, dict):
+            raise RuntimeError("Moderation 返回不是 JSON 对象")
+        return data
+
+    def _image_file_to_data_uri(self, path: str) -> str:
+        from ..generation.image_utils import detect_mime_type
+
+        data = Path(path).read_bytes()
+        mime = detect_mime_type(data)
+        return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+    def _parse_moderation_result(
+        self,
+        response: dict[str, object],
+        rules: list[tuple[str, float | None]],
+    ) -> list[str]:
+        """Return blocked category hits from a single-image moderation response."""
+        results = response.get("results")
+        if not isinstance(results, list) or len(results) != 1:
+            actual = len(results) if isinstance(results, list) else "无"
+            raise RuntimeError(f"Moderation 返回结果数量异常: 期望 1，实际 {actual}")
+        result = results[0]
+        if not isinstance(result, dict):
+            raise RuntimeError("Moderation 返回结果格式异常")
+        return self._collect_moderation_hits(result, rules)
+
+    def _parse_moderation_rules(
+        self, blocked_categories: list[str]
+    ) -> list[tuple[str, float | None]]:
+        """Parse category rules like "porn" or "sexy:0.8" (score threshold)."""
+        rules: list[tuple[str, float | None]] = []
+        for raw in blocked_categories:
+            entry = str(raw).strip().replace("：", ":")
+            if not entry:
+                continue
+            name, _, threshold_text = entry.partition(":")
+            name = name.strip().lower()
+            if not name:
+                continue
+            threshold: float | None = None
+            threshold_text = threshold_text.strip()
+            if threshold_text:
+                try:
+                    threshold = float(threshold_text)
+                except ValueError:
+                    logger.warning(
+                        f"{LOG} 无法解析 Moderation 拦截阈值，按类别布尔判定处理: "
+                        f"{safe_log_text(entry, 80)}"
+                    )
+            rules.append((name, threshold))
+        return rules
+
+    def _collect_moderation_hits(
+        self,
+        result: dict[str, object],
+        rules: list[tuple[str, float | None]],
+    ) -> list[str]:
+        raw_categories = result.get("categories")
+        raw_scores = result.get("category_scores")
+        categories = {
+            str(key).lower(): value
+            for key, value in (
+                raw_categories.items() if isinstance(raw_categories, dict) else ()
+            )
+        }
+        scores = {
+            str(key).lower(): value
+            for key, value in (
+                raw_scores.items() if isinstance(raw_scores, dict) else ()
+            )
+        }
+
+        hits: list[str] = []
+
+        if self._to_bool(result.get("flagged")):
+            flagged_names = [
+                name for name, value in categories.items() if self._to_bool(value)
+            ]
+            if flagged_names:
+                hits.extend(
+                    self._format_moderation_hit(name, scores) for name in flagged_names
+                )
+            else:
+                hits.append("flagged")
+
+        for name, threshold in rules:
+            if threshold is None:
+                matched = bool(self._to_bool(categories.get(name)))
+            else:
+                score = scores.get(name)
+                matched = isinstance(score, (int, float)) and score >= threshold
+            if matched:
+                hit = self._format_moderation_hit(name, scores)
+                if hit not in hits:
+                    hits.append(hit)
+        return hits
+
+    @staticmethod
+    def _format_moderation_hit(name: str, scores: dict[str, object]) -> str:
+        score = scores.get(name)
+        if isinstance(score, (int, float)):
+            return f"{name}({score:.2f})"
+        return name
 
     def _match_blocked_word(self, prompt: str, blocked_words: list[str]) -> str:
         content = prompt.lower()

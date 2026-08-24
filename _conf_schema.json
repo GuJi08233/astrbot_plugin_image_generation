@@ -1581,6 +1581,42 @@
         "description": "图片审核",
         "type": "object",
         "items": {
+          "enable_moderation_audit": {
+            "description": "启用 Moderation 接口审核",
+            "hint": "开启后在发送图片前调用 OpenAI 兼容 /moderations 接口审核图片（如模力方舟 Gitee AI 的 nsfw-classifier）。与 AI 图片审核相互独立；两者都开启时先执行本审核，通过后再执行 AI 审核。",
+            "type": "bool",
+            "default": false
+          },
+          "moderation_api_base": {
+            "description": "Moderation 接口地址",
+            "hint": "OpenAI 兼容 Moderation 服务的 Base URL，实际请求 {接口地址}/moderations。",
+            "type": "string",
+            "default": "https://ai.gitee.com/v1"
+          },
+          "moderation_api_key": {
+            "description": "Moderation API 密钥",
+            "hint": "Moderation 服务的 API Key。",
+            "type": "string",
+            "default": ""
+          },
+          "moderation_model": {
+            "description": "Moderation 模型",
+            "hint": "审核模型名称，例如模力方舟的 nsfw-classifier。",
+            "type": "string",
+            "default": "nsfw-classifier"
+          },
+          "moderation_blocked_categories": {
+            "description": "Moderation 额外拦截类别",
+            "hint": "留空时仅按接口返回的 flagged 判定。每行一个类别名（nsfw-classifier 支持 porn、hentai、sexy、drawings、neutral），命中该类别即拦截；也支持 类别:阈值 写法（如 sexy:0.8）按置信度分数拦截。",
+            "type": "list",
+            "default": []
+          },
+          "moderation_proxy": {
+            "description": "Moderation 代理地址",
+            "hint": "HTTP 代理，例如 http://127.0.0.1:7890；留空直连。",
+            "type": "string",
+            "default": ""
+          },
           "enable_ai_audit": {
             "description": "启用 AI 图片审核",
             "hint": "开启后在发送图片前调用对话模型审核图片内容。",
