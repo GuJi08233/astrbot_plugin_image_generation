@@ -130,6 +130,12 @@ class ImageGenerationPageAPI:
                 ["POST"],
                 "Delete one generated image from Page",
             ),
+            (
+                "/page/tasks/<task_id>/reaudit",
+                self.page_reaudit_task,
+                ["POST"],
+                "Re-audit generated images from Page",
+            ),
         ]
         for route, handler, methods, description in page_routes:
             self.plugin.context.register_web_api(
@@ -1122,6 +1128,77 @@ class ImageGenerationPageAPI:
                 "task_id": task_id,
                 "files_removed": files_removed,
                 "remaining": len(record.result_paths),
+            }
+        )
+
+    async def page_reaudit_task(self, task_id: str):
+        """Re-run the image audit for a task's generated images.
+
+        The verdict is returned for display only and never overwrites the
+        audit history recorded when the task originally ran.
+
+        Returns:
+            A JSON response with the fresh audit verdict and details.
+        """
+        plugin = self.plugin
+        record = plugin.task_manager.get_generation_task(task_id)
+        if not record:
+            return error_response("任务不存在", status_code=404)
+
+        payload = await request.json(default={})
+        image_index: int | None = None
+        if isinstance(payload, dict) and payload.get("image_index") is not None:
+            try:
+                image_index = int(payload.get("image_index"))
+            except (TypeError, ValueError):
+                return error_response("图片序号无效", status_code=400)
+
+        if image_index is not None:
+            if image_index < 1 or image_index > len(record.result_paths):
+                return error_response("图片序号无效", status_code=400)
+            candidate_paths = [record.result_paths[image_index - 1]]
+        else:
+            candidate_paths = list(record.result_paths)
+
+        roots = self._page_allowed_image_roots()
+        image_paths: list[str] = []
+        for path_value in candidate_paths:
+            try:
+                path = Path(path_value).resolve()
+            except OSError:
+                continue
+            if (
+                any(self._path_is_under(path, root) for root in roots)
+                and path.is_file()
+            ):
+                image_paths.append(str(path))
+        if not image_paths:
+            return error_response("没有可复审的图片文件", status_code=400)
+
+        settings = plugin.config_manager.safety_audit_settings
+        (
+            allowed,
+            reason,
+            audit_results,
+        ) = await plugin.safety_auditor.audit_generated_images(
+            prompt=record.prompt or record.prompt_summary or "",
+            image_paths=image_paths,
+            unified_msg_origin="webui:audit-test",
+        )
+        return json_response(
+            {
+                "ok": True,
+                "task_id": task_id,
+                "audited_count": len(image_paths),
+                "enabled": {
+                    "image_moderation": settings.image_audit.enable_moderation_audit,
+                    "image_ai": settings.image_audit.enable_ai_audit,
+                },
+                "image_audit": {
+                    "allowed": allowed,
+                    "reason": reason or ("审核通过" if allowed else "审核未通过"),
+                    "audit_results": audit_results,
+                },
             }
         )
 

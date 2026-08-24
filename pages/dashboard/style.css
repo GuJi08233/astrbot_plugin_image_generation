@@ -1125,6 +1125,24 @@ textarea:focus {
   margin-top: 4px;
 }
 
+.audit-modal-dialog {
+  width: min(92vw, 720px);
+  max-height: 82vh;
+  overflow-y: auto;
+  padding: 20px;
+  background: var(--surface);
+  border-radius: var(--radius-md);
+}
+
+.audit-modal-title {
+  margin: 0 0 14px;
+  font-size: 1.1rem;
+}
+
+.audit-modal-body .detail-section {
+  margin-top: 14px;
+}
+
 .info-list {
   display: grid;
   gap: 10px;

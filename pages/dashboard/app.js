@@ -135,6 +135,11 @@ const FALLBACK = {
   'gallery.delete': '删除',
   'gallery.deleteConfirm': '确定删除这张图片？文件将被删除且不可恢复。',
   'message.imageDeleted': '图片已删除',
+  'detail.reaudit': '复审图片',
+  'gallery.reaudit': '复审',
+  'audit.reauditRunning': '复审中...',
+  'audit.reauditTitle': '复审结果',
+  'audit.reauditCount': '本次复审 {count} 张图片，按当前审核配置执行，不影响任务原有审核记录。',
   'message.stateLoaded': '状态已刷新',
   'message.taskSubmitted': '任务已提交',
   'message.uploaded': '参考图已上传',
@@ -1268,6 +1273,7 @@ function renderDetail(task) {
       </div>
       <div class="detail-actions">
         <span class="badge ${escapeHtml(task.status)}">${escapeHtml(statusLabel(task.status, task.status_label))}</span>
+        ${!active && (task.result_images || []).length ? `<button class="btn subtle" id="reauditTaskBtn" type="button">${escapeHtml(t('detail.reaudit'))}</button>` : ''}
         ${active ? `<button class="btn danger" id="cancelTaskBtn" type="button">${escapeHtml(t('detail.cancel'))}</button>` : `<button class="btn danger" id="deleteTaskBtn" type="button">${escapeHtml(t('detail.delete'))}</button>`}
       </div>
     </div>
@@ -1714,21 +1720,23 @@ async function uploadAuditImages(files) {
   }
 }
 
+function renderAuditVerdictCard(labelKey, verdict) {
+  const blocked = !verdict.allowed;
+  return `<div class="audit-card ${blocked ? 'is-blocked' : ''}">
+    <div class="audit-card-head">
+      <strong>${escapeHtml(t(labelKey))}</strong>
+      <span class="badge ${blocked ? 'failed' : 'succeeded'}">${escapeHtml(blocked ? t('audit.blocked') : t('audit.passed'))}</span>
+    </div>
+    <small class="audit-note">${escapeHtml(verdict.reason || '')}</small>
+  </div>`;
+}
+
 function renderAuditTestResult(result) {
   const panel = $('#auditTestResult');
   if (!panel) return;
   const enabled = result.enabled || {};
   const sections = [];
-  const verdictBlock = (labelKey, verdict) => {
-    const blocked = !verdict.allowed;
-    return `<div class="audit-card ${blocked ? 'is-blocked' : ''}">
-      <div class="audit-card-head">
-        <strong>${escapeHtml(t(labelKey))}</strong>
-        <span class="badge ${blocked ? 'failed' : 'succeeded'}">${escapeHtml(blocked ? t('audit.blocked') : t('audit.passed'))}</span>
-      </div>
-      <small class="audit-note">${escapeHtml(verdict.reason || '')}</small>
-    </div>`;
-  };
+  const verdictBlock = renderAuditVerdictCard;
   if (result.prompt_audit) {
     sections.push(verdictBlock('audit.promptResult', result.prompt_audit));
     if (!enabled.prompt_blocked_words && !enabled.prompt_ai) {
@@ -1844,6 +1852,41 @@ async function cleanupFinishedTasks() {
   }
 }
 
+function showAuditModal(html) {
+  const modal = $('#auditModal');
+  const body = $('#auditModalBody');
+  if (!modal || !body) return;
+  body.innerHTML = html;
+  modal.hidden = false;
+}
+
+function closeAuditModal() {
+  const modal = $('#auditModal');
+  if (modal) modal.hidden = true;
+}
+
+async function reauditTask(taskId, imageIndex) {
+  if (!taskId) return;
+  showToast(t('audit.reauditRunning'));
+  try {
+    const body = imageIndex ? { image_index: Number(imageIndex) } : {};
+    const result = await apiPost(`page/tasks/${encodeURIComponent(taskId)}/reaudit`, body);
+    const verdict = result.image_audit || {};
+    const enabled = result.enabled || {};
+    const sections = [
+      `<small class="audit-note">${escapeHtml(t('audit.reauditCount', { count: result.audited_count || 0 }))}</small>`,
+      renderAuditVerdictCard('audit.imageResult', verdict),
+    ];
+    if (!enabled.image_moderation && !enabled.image_ai) {
+      sections.push(`<small class="audit-note">${escapeHtml(t('audit.testDisabledImage'))}</small>`);
+    }
+    sections.push(renderAuditResults({ audit_results: verdict.audit_results || [] }));
+    showAuditModal(`<div class="audit-grid">${sections.join('')}</div>`);
+  } catch (error) {
+    showToast(error.message || t('error.generic'), true);
+  }
+}
+
 async function deleteGalleryImage(taskId, imageIndex) {
   if (!window.confirm(t('gallery.deleteConfirm'))) return;
   try {
@@ -1924,6 +1967,7 @@ function renderGallery() {
           <div class="gallery-actions">
             <button class="btn subtle" type="button" data-gallery-task="${escapeHtml(item.task_id)}">${escapeHtml(t('gallery.openTask'))}</button>
             <button class="btn primary" type="button" data-download-endpoint="${escapeHtml(item.download_endpoint || '')}" data-download-name="${escapeHtml(item.filename || '')}" ${available ? '' : 'disabled'}>${escapeHtml(t('detail.download'))}</button>
+            <button class="btn subtle" type="button" data-gallery-reaudit data-gallery-task-id="${escapeHtml(item.task_id)}" data-gallery-image-index="${escapeHtml(item.image_index)}" ${available ? '' : 'disabled'}>${escapeHtml(t('gallery.reaudit'))}</button>
             <button class="btn danger" type="button" data-gallery-delete data-gallery-task-id="${escapeHtml(item.task_id)}" data-gallery-image-index="${escapeHtml(item.image_index)}">${escapeHtml(t('gallery.delete'))}</button>
           </div>
         </div>
@@ -2015,6 +2059,14 @@ function bindEvents() {
     galleryKeywordTimer = window.setTimeout(() => loadGallery(), 280);
   });
   $('#galleryGrid')?.addEventListener('click', (event) => {
+    const reauditButton = event.target.closest('[data-gallery-reaudit]');
+    if (reauditButton && !reauditButton.disabled) {
+      reauditTask(
+        reauditButton.dataset.galleryTaskId,
+        reauditButton.dataset.galleryImageIndex,
+      );
+      return;
+    }
     const deleteButton = event.target.closest('[data-gallery-delete]');
     if (deleteButton) {
       deleteGalleryImage(
@@ -2064,6 +2116,9 @@ function bindEvents() {
   });
   $('#auditTestBtn')?.addEventListener('click', () => runAuditTest());
   $('#tasksCleanupBtn')?.addEventListener('click', () => cleanupFinishedTasks());
+  $('#auditModal')?.addEventListener('click', (event) => {
+    if (event.target.closest('[data-audit-modal-close]')) closeAuditModal();
+  });
   document.querySelectorAll('.tab-btn').forEach((button) => {
     button.addEventListener('click', () => setView(button.dataset.view));
   });
@@ -2123,6 +2178,10 @@ function bindEvents() {
     }
     if (event.target.id === 'deleteTaskBtn') {
       deleteSelectedTask();
+      return;
+    }
+    if (event.target.id === 'reauditTaskBtn') {
+      reauditTask(appState.selectedTaskId);
       return;
     }
     if (event.target.id === 'togglePromptBtn') {
