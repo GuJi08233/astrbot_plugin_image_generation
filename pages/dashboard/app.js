@@ -105,6 +105,13 @@ const FALLBACK = {
   'detail.results': '生成结果',
   'detail.noResults': '暂无生成结果',
   'detail.noItems': '暂无子任务详情',
+  'detail.audit': '审核详情',
+  'audit.stageModeration': 'Moderation 接口审核',
+  'audit.stageAi': 'AI 模型审核',
+  'audit.blocked': '已拦截',
+  'audit.passed': '通过',
+  'audit.flagged': '服务端标记违规 (flagged)',
+  'audit.hits': '命中规则',
   'message.stateLoaded': '状态已刷新',
   'message.taskSubmitted': '任务已提交',
   'message.uploaded': '参考图已上传',
@@ -1092,6 +1099,67 @@ async function loadTasks({ resetOffset = false } = {}) {
   }
 }
 
+const AUDIT_CATEGORY_LABELS = {
+  porn: '真人色情',
+  hentai: '二次元色情',
+  sexy: '性感擦边',
+  drawings: '普通绘画',
+  neutral: '正常内容',
+};
+
+function renderAuditResults(task) {
+  const entries = Array.isArray(task.audit_results) ? task.audit_results : [];
+  if (!entries.length) return '';
+  const cards = entries
+    .map((entry) => {
+      const blocked = Boolean(entry.blocked);
+      const badge = `<span class="badge ${blocked ? 'failed' : 'succeeded'}">${escapeHtml(blocked ? t('audit.blocked') : t('audit.passed'))}</span>`;
+      if (entry.stage === 'ai') {
+        return `<article class="audit-card ${blocked ? 'is-blocked' : ''}">
+          <div class="audit-card-head">
+            <strong>${escapeHtml(t('audit.stageAi'))}</strong>
+            ${badge}
+          </div>
+          ${entry.reason ? `<small class="audit-note">${escapeHtml(entry.reason)}</small>` : ''}
+        </article>`;
+      }
+      const title = entry.image_name
+        ? `#${escapeHtml(entry.image_index || '?')} ${escapeHtml(entry.image_name)}`
+        : escapeHtml(t('audit.stageModeration'));
+      const scores = entry.scores && typeof entry.scores === 'object' ? entry.scores : {};
+      const scoreRows = Object.entries(scores)
+        .sort((a, b) => Number(b[1]) - Number(a[1]))
+        .map(([name, value]) => {
+          const score = Math.max(0, Math.min(1, Number(value) || 0));
+          const label = AUDIT_CATEGORY_LABELS[name] ? `${AUDIT_CATEGORY_LABELS[name]} ${name}` : name;
+          return `<div class="audit-score">
+            <span>${escapeHtml(label)}</span>
+            <div class="audit-bar"><i style="width:${(score * 100).toFixed(1)}%"></i></div>
+            <em>${score.toFixed(3)}</em>
+          </div>`;
+        })
+        .join('');
+      const hits = Array.isArray(entry.hits) ? entry.hits.filter(Boolean) : [];
+      const notes = [];
+      if (entry.flagged) notes.push(escapeHtml(t('audit.flagged')));
+      if (hits.length) notes.push(`${escapeHtml(t('audit.hits'))}: ${escapeHtml(hits.join(', '))}`);
+      return `<article class="audit-card ${blocked ? 'is-blocked' : ''}">
+        <div class="audit-card-head">
+          <strong>${title}</strong>
+          ${badge}
+        </div>
+        ${scoreRows ? `<div class="audit-scores">${scoreRows}</div>` : ''}
+        ${notes.length ? `<small class="audit-note">${notes.join(' · ')}</small>` : ''}
+        ${entry.error ? `<small class="audit-note is-error">${escapeHtml(entry.error)}</small>` : ''}
+      </article>`;
+    })
+    .join('');
+  return `<div class="detail-section">
+    <div class="section-heading"><h2>${escapeHtml(t('detail.audit'))}</h2></div>
+    <div class="audit-grid">${cards}</div>
+  </div>`;
+}
+
 function renderDetail(task) {
   const active = task.active;
   const expanded = Boolean(appState.expandedPromptByTask[task.task_id]);
@@ -1204,6 +1272,7 @@ function renderDetail(task) {
     </div>
     ${task.message ? `<div class="detail-message"><strong>${escapeHtml(t('detail.message'))}</strong><br />${escapeHtml(task.message)}</div>` : ''}
     ${task.error ? `<div class="detail-error"><strong>${escapeHtml(t('detail.error'))}</strong><br />${escapeHtml(task.error)}</div>` : ''}
+    ${renderAuditResults(task)}
     <div class="detail-section">
       <div class="section-heading"><h2>${escapeHtml(t('detail.results'))}</h2></div>
       <div class="result-grid">${resultCards || `<span class="empty-inline">${escapeHtml(t('detail.noResults'))}</span>`}</div>
@@ -1338,6 +1407,9 @@ function detailNeedsRerender(prevTask, nextTask) {
   const prevImages = JSON.stringify(prevTask.result_images || []);
   const nextImages = JSON.stringify(nextTask.result_images || []);
   if (prevImages !== nextImages) return true;
+  const prevAudit = JSON.stringify(prevTask.audit_results || []);
+  const nextAudit = JSON.stringify(nextTask.audit_results || []);
+  if (prevAudit !== nextAudit) return true;
   return false;
 }
 
@@ -1441,6 +1513,7 @@ function renderGenerateResultCard(task) {
     </div>
     ${task.message ? `<div class="detail-message"><strong>${escapeHtml(t('detail.message'))}</strong><br />${escapeHtml(task.message)}</div>` : ''}
     ${task.error ? `<div class="detail-error"><strong>${escapeHtml(t('detail.error'))}</strong><br />${escapeHtml(task.error)}</div>` : ''}
+    ${renderAuditResults(task)}
     <div class="detail-section">
       <div class="section-heading"><h2>${escapeHtml(t('detail.results'))}</h2></div>
       <div class="result-grid">${resultCards || `<span class="empty-inline">${escapeHtml(t('detail.noResults'))}</span>`}</div>

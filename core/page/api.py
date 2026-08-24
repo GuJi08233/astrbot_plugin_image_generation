@@ -167,6 +167,9 @@ class ImageGenerationPageAPI:
                 self._page_image_payload(record, index, path)
                 for index, path in enumerate(record.result_paths, 1)
             ],
+            "audit_results": [
+                dict(entry) for entry in record.audit_results if isinstance(entry, dict)
+            ],
         }
         if include_detail:
             payload["prompt"] = record.prompt or record.prompt_summary or ""

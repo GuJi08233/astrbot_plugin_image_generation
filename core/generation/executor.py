@@ -284,7 +284,11 @@ class GenerationExecutor:
             f"结果={len(generated_file_paths)}/{image_count}张，失败={len(errors)}项"
         )
 
-        image_allowed, image_reason = await self.safety_auditor.audit_generated_images(
+        (
+            image_allowed,
+            image_reason,
+            audit_results,
+        ) = await self.safety_auditor.audit_generated_images(
             prompt=prompt,
             image_paths=generated_file_paths,
             unified_msg_origin=unified_msg_origin,
@@ -294,9 +298,13 @@ class GenerationExecutor:
                 task_id,
                 actual_count=len(generated_file_paths),
             )
+            # Keep blocked image paths on the record so admins can review them
+            # (and the audit details) in the WebUI task detail page.
             self.task_manager.mark_generation_task_failed(
                 task_id,
                 f"图片内容审核未通过: {image_reason}",
+                result_paths=generated_file_paths,
+                audit_results=audit_results,
             )
             if skip_direct_delivery:
                 return
@@ -321,6 +329,7 @@ class GenerationExecutor:
                 result_count=len(generated_file_paths),
                 result_paths=generated_file_paths,
                 message=result_message,
+                audit_results=audit_results,
             )
             return
 
@@ -354,6 +363,7 @@ class GenerationExecutor:
             result_count=len(generated_file_paths),
             result_paths=generated_file_paths,
             message=delivery_message,
+            audit_results=audit_results,
         )
 
     async def _send_generated_images(
@@ -441,9 +451,7 @@ class GenerationExecutor:
                         task_id=task_id,
                         batch_index=current_index,
                         batch_count=image_count,
-                        retry_status_callback=lambda retry_attempt,
-                        max_retry_attempts,
-                        current_index=current_index: (
+                        retry_status_callback=lambda retry_attempt, max_retry_attempts, current_index=current_index: (
                             self.task_manager.update_generation_task_retry_status(
                                 task_id,
                                 current_index=current_index,

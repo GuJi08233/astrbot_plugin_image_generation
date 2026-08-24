@@ -123,7 +123,7 @@ class SafetyAuditorModerationTest(unittest.TestCase):
             )
 
     def test_allows_unflagged_result(self):
-        (allowed, reason), _ = self._run_audit(_response(_moderation_result()))
+        (allowed, reason, _), _ = self._run_audit(_response(_moderation_result()))
         self.assertTrue(allowed)
         self.assertEqual(reason, "审核通过")
 
@@ -135,12 +135,12 @@ class SafetyAuditorModerationTest(unittest.TestCase):
                 scores={"porn": 0.93},
             )
         )
-        (allowed, reason), _ = self._run_audit(response)
+        (allowed, reason, _), _ = self._run_audit(response)
         self.assertFalse(allowed)
         self.assertIn("porn(0.93)", reason)
 
     def test_blocks_flagged_result_without_categories(self):
-        (allowed, reason), _ = self._run_audit(
+        (allowed, reason, _), _ = self._run_audit(
             _response(_moderation_result(flagged=True))
         )
         self.assertFalse(allowed)
@@ -151,7 +151,7 @@ class SafetyAuditorModerationTest(unittest.TestCase):
         response = _response(
             _moderation_result(categories={"sexy": True}, scores={"sexy": 0.4})
         )
-        (allowed, reason), _ = self._run_audit(response)
+        (allowed, reason, _), _ = self._run_audit(response)
         self.assertFalse(allowed)
         self.assertIn("sexy(0.40)", reason)
 
@@ -160,14 +160,14 @@ class SafetyAuditorModerationTest(unittest.TestCase):
         blocked = _response(
             _moderation_result(categories={"sexy": False}, scores={"sexy": 0.85})
         )
-        (allowed, reason), _ = self._run_audit(blocked)
+        (allowed, reason, _), _ = self._run_audit(blocked)
         self.assertFalse(allowed)
         self.assertIn("sexy(0.85)", reason)
 
         passed = _response(
             _moderation_result(categories={"sexy": False}, scores={"sexy": 0.5})
         )
-        (allowed, _), _ = self._run_audit(passed)
+        (allowed, _ignored, _), _ = self._run_audit(passed)
         self.assertTrue(allowed)
 
     def test_multiple_images_requested_one_by_one_and_reports_position(self):
@@ -187,7 +187,7 @@ class SafetyAuditorModerationTest(unittest.TestCase):
                 return_value="data:image/png;base64,AA==",
             ),
         ):
-            allowed, reason = asyncio.run(
+            allowed, reason, _ = asyncio.run(
                 self.auditor._audit_with_moderation_api(
                     ["a.png", "b.png"], self.settings
                 )
@@ -198,14 +198,46 @@ class SafetyAuditorModerationTest(unittest.TestCase):
         for call in post.await_args_list:
             self.assertEqual(len(call.args[2]["input"]), 1)
 
+    def test_audit_details_recorded_for_each_image(self):
+        self.settings.moderation_sexy_threshold = 0.8
+        response = _response(
+            _moderation_result(
+                flagged=True,
+                categories={"sexy": True},
+                scores={"sexy": 0.9912, "neutral": 0.005},
+            )
+        )
+        (allowed, reason, details), _ = self._run_audit(response)
+        self.assertFalse(allowed)
+        self.assertEqual(len(details), 1)
+        detail = details[0]
+        self.assertEqual(detail["stage"], "moderation")
+        self.assertEqual(detail["image_index"], 1)
+        self.assertEqual(detail["image_name"], "img.png")
+        self.assertTrue(detail["flagged"])
+        self.assertTrue(detail["blocked"])
+        self.assertEqual(detail["scores"], {"sexy": 0.9912, "neutral": 0.005})
+        self.assertIn("sexy(0.99)", detail["hits"])
+
+    def test_audit_details_recorded_when_passed(self):
+        response = _response(
+            _moderation_result(scores={"neutral": 0.99, "sexy": 0.001})
+        )
+        (allowed, _reason, details), _ = self._run_audit(response)
+        self.assertTrue(allowed)
+        self.assertEqual(len(details), 1)
+        self.assertFalse(details[0]["blocked"])
+        self.assertFalse(details[0]["flagged"])
+        self.assertEqual(details[0]["scores"]["neutral"], 0.99)
+
     def test_result_count_mismatch_fails_closed_with_retry(self):
-        (allowed, reason), post = self._run_audit(_response())
+        (allowed, reason, _), post = self._run_audit(_response())
         self.assertFalse(allowed)
         self.assertIn("安全审核异常", reason)
         self.assertEqual(post.await_count, 2)
 
     def test_http_error_fails_closed_after_retries(self):
-        (allowed, reason), post = self._run_audit(
+        (allowed, reason, _), post = self._run_audit(
             None, side_effect=RuntimeError("HTTP 500: boom")
         )
         self.assertFalse(allowed)
@@ -216,14 +248,14 @@ class SafetyAuditorModerationTest(unittest.TestCase):
         settings = ImageAuditSettings(
             enable_moderation_audit=True, moderation_api_key="  "
         )
-        allowed, reason = asyncio.run(
+        allowed, reason, _ = asyncio.run(
             self.auditor._audit_with_moderation_api(["img.png"], settings)
         )
         self.assertFalse(allowed)
         self.assertIn("未配置 Moderation API 密钥", reason)
 
     def test_empty_image_list_passes(self):
-        allowed, reason = asyncio.run(
+        allowed, reason, _ = asyncio.run(
             self.auditor._audit_with_moderation_api([], self.settings)
         )
         self.assertTrue(allowed)
@@ -234,14 +266,14 @@ class SafetyAuditorModerationTest(unittest.TestCase):
         blocked = _response(
             _moderation_result(categories={"sexy": False}, scores={"sexy": 0.85})
         )
-        (allowed, reason), _ = self._run_audit(blocked)
+        (allowed, reason, _), _ = self._run_audit(blocked)
         self.assertFalse(allowed)
         self.assertIn("sexy(0.85)", reason)
 
         passed = _response(
             _moderation_result(categories={"sexy": False}, scores={"sexy": 0.5})
         )
-        (allowed, _), _ = self._run_audit(passed)
+        (allowed, _ignored, _), _ = self._run_audit(passed)
         self.assertTrue(allowed)
 
     def test_slider_threshold_zero_is_disabled(self):
@@ -249,7 +281,7 @@ class SafetyAuditorModerationTest(unittest.TestCase):
         response = _response(
             _moderation_result(categories={"porn": False}, scores={"porn": 0.99})
         )
-        (allowed, _), _ = self._run_audit(response)
+        (allowed, _ignored, _), _ = self._run_audit(response)
         self.assertTrue(allowed)
 
     def test_slider_thresholds_combine_with_extra_rules(self):

@@ -115,6 +115,7 @@ class GenerationTaskRecord:
     error: str = ""
     result_count: int = 0
     result_paths: list[str] = field(default_factory=list)
+    audit_results: list[dict[str, Any]] = field(default_factory=list)
     current_index: int = 0
     retry_attempt: int = 0
     max_retry_attempts: int = 0

@@ -371,6 +371,7 @@ class TaskManager(
         error: str = "",
         result_count: int = 0,
         result_paths: list[str] | None = None,
+        audit_results: list[dict[str, Any]] | None = None,
     ) -> GenerationTaskRecord | None:
         """Move a task into terminal state exactly once."""
         record = self._generation_tasks.get(task_id)
@@ -383,6 +384,8 @@ class TaskManager(
         record.error = safe_log_error_body(error, 300) if error else ""
         if result_paths is not None:
             record.result_paths = list(result_paths)
+        if audit_results is not None:
+            record.audit_results = list(audit_results)
         final_result_count = (
             result_count or len(record.result_paths) or record.result_count
         )
@@ -526,6 +529,7 @@ class TaskManager(
         result_count: int = 0,
         result_paths: list[str] | None = None,
         message: str = "任务已完成",
+        audit_results: list[dict[str, Any]] | None = None,
     ) -> None:
         """Mark a generation task as successful."""
         record = self._enter_generation_terminal_status(
@@ -534,6 +538,7 @@ class TaskManager(
             message=message,
             result_count=result_count,
             result_paths=result_paths,
+            audit_results=audit_results,
         )
         if not record:
             return
@@ -549,13 +554,22 @@ class TaskManager(
         self._save_generation_tasks()
         self._notify_generation_task_terminal(task_id)
 
-    def mark_generation_task_failed(self, task_id: str, error: str) -> None:
+    def mark_generation_task_failed(
+        self,
+        task_id: str,
+        error: str,
+        *,
+        result_paths: list[str] | None = None,
+        audit_results: list[dict[str, Any]] | None = None,
+    ) -> None:
         """Mark a generation task as failed."""
         record = self._enter_generation_terminal_status(
             task_id,
             GenerationTaskStatus.FAILED,
             message="任务失败",
             error=error,
+            result_paths=result_paths,
+            audit_results=audit_results,
         )
         if not record:
             return

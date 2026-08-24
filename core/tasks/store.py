@@ -137,6 +137,9 @@ class GenerationTaskStore:
             "started_at": self._datetime_to_str(record.started_at),
             "finished_at": self._datetime_to_str(record.finished_at),
             "result_paths": list(record.result_paths),
+            "audit_results": [
+                dict(entry) for entry in record.audit_results if isinstance(entry, dict)
+            ],
             "current_index": record.current_index,
             "retry_attempt": record.retry_attempt,
             "max_retry_attempts": record.max_retry_attempts,
@@ -217,6 +220,7 @@ class GenerationTaskStore:
             error=safe_log_error_body(raw_record.get("error") or "", 300),
             result_count=self._safe_int(raw_record.get("result_count"), 0, 0),
             result_paths=self._safe_str_list(raw_record.get("result_paths")),
+            audit_results=self._safe_dict_list(raw_record.get("audit_results")),
             current_index=self._safe_int(raw_record.get("current_index"), 0, 0),
             retry_attempt=self._safe_int(raw_record.get("retry_attempt"), 0, 0),
             max_retry_attempts=self._safe_int(
@@ -308,3 +312,9 @@ class GenerationTaskStore:
         if not isinstance(value, list):
             return []
         return [str(item) for item in value if isinstance(item, str) and item]
+
+    def _safe_dict_list(self, value: Any) -> list[dict[str, Any]]:
+        """Return only dict entries from a persisted list."""
+        if not isinstance(value, list):
+            return []
+        return [dict(item) for item in value if isinstance(item, dict)]

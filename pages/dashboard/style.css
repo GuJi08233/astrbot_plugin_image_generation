@@ -1022,6 +1022,82 @@ textarea:focus {
   background: color-mix(in srgb, var(--error) 10%, var(--surface));
 }
 
+.audit-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.audit-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  background: var(--surface);
+}
+
+.audit-card.is-blocked {
+  border-color: color-mix(in srgb, var(--error) 32%, var(--border));
+  background: color-mix(in srgb, var(--error) 6%, var(--surface));
+}
+
+.audit-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.audit-scores {
+  display: grid;
+  gap: 6px;
+}
+
+.audit-score {
+  display: grid;
+  grid-template-columns: minmax(120px, 160px) 1fr 52px;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.85rem;
+}
+
+.audit-score span {
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.audit-score em {
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.audit-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  overflow: hidden;
+}
+
+.audit-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--error) 70%, var(--primary));
+  min-width: 2px;
+}
+
+.audit-note {
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.audit-note.is-error {
+  color: var(--error);
+}
+
 .info-list {
   display: grid;
   gap: 10px;

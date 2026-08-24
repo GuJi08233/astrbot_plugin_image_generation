@@ -63,34 +63,51 @@ class SafetyAuditor:
         prompt: str,
         image_paths: list[str],
         unified_msg_origin: str,
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, list[dict[str, object]]]:
+        """Audit generated images.
+
+        Returns:
+            (allowed, reason, audit_results) where audit_results carries
+            per-image moderation scores and the AI audit verdict for the
+            task history / WebUI detail page.
+        """
         if self._is_umo_whitelisted(unified_msg_origin):
-            return True, ""
+            return True, "", []
 
         settings = self._config_manager.safety_audit_settings.image_audit
+        audit_results: list[dict[str, object]] = []
 
         if settings.enable_moderation_audit:
-            allowed, reason = await self._audit_with_moderation_api(
+            allowed, reason, moderation_results = await self._audit_with_moderation_api(
                 image_paths, settings
             )
+            audit_results.extend(moderation_results)
             if not allowed:
-                return False, reason
+                return False, reason, audit_results
 
         if not settings.enable_ai_audit:
-            return True, ""
+            return True, "", audit_results
 
         review_prompt = self._build_review_prompt(
             settings.ai_prompt,
             prompt,
             append_prompt_if_missing_placeholder=False,
         )
-        return await self._audit_with_model(
+        allowed, reason = await self._audit_with_model(
             unified_msg_origin=unified_msg_origin,
             review_prompt=review_prompt,
             provider_id=settings.ai_provider_id,
             max_retry_attempts=settings.max_retry_attempts,
             image_urls=image_paths,
         )
+        audit_results.append(
+            {
+                "stage": "ai",
+                "blocked": not allowed,
+                "reason": reason or ("审核通过" if allowed else "审核未通过"),
+            }
+        )
+        return allowed, reason, audit_results
 
     def _is_umo_whitelisted(self, unified_msg_origin: str) -> bool:
         umo = unified_msg_origin.strip()
@@ -196,30 +213,39 @@ class SafetyAuditor:
         self,
         image_paths: list[str],
         settings: ImageAuditSettings,
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, list[dict[str, object]]]:
         if not image_paths:
-            return True, ""
+            return True, "", []
 
         api_key = settings.moderation_api_key.strip()
         if not api_key:
             msg = "安全审核异常：未配置 Moderation API 密钥"
             logger.warning(f"{LOG} {msg}")
-            return False, msg
+            return False, msg, []
 
         url = settings.moderation_api_base.strip().rstrip("/") + "/moderations"
         model = settings.moderation_model.strip()
         proxy = settings.moderation_proxy.strip() or None
         rules = self._collect_moderation_rules(settings)
         total = len(image_paths)
+        details: list[dict[str, object]] = []
 
         # Gitee AI 的 /moderations 每次请求只接受一张图片，逐张审核。
         for index, path in enumerate(image_paths, start=1):
+            detail: dict[str, object] = {
+                "stage": "moderation",
+                "image_index": index,
+                "image_name": Path(path).name,
+                "model": model,
+            }
             try:
                 data_uri = self._image_file_to_data_uri(path)
             except OSError as exc:
                 msg = f"安全审核异常：读取待审核图片失败 - {str(exc)[:180]}"
                 logger.warning(f"{LOG} {msg}")
-                return False, msg
+                detail.update(blocked=True, error=msg)
+                details.append(detail)
+                return False, msg, details
 
             payload: dict[str, object] = {
                 "model": model,
@@ -234,10 +260,12 @@ class SafetyAuditor:
                 max_retry_attempts=settings.max_retry_attempts,
                 rules=rules,
                 position=position,
+                detail=detail,
             )
+            details.append(detail)
             if not allowed:
-                return False, reason
-        return True, "审核通过"
+                return False, reason, details
+        return True, "审核通过", details
 
     async def _moderate_single_image(
         self,
@@ -249,13 +277,20 @@ class SafetyAuditor:
         max_retry_attempts: int,
         rules: list[tuple[str, float | None]],
         position: str,
+        detail: dict[str, object],
     ) -> tuple[bool, str]:
         attempts = max(1, max_retry_attempts)
         last_reason = "安全审核异常：Moderation 接口未返回结果"
         for attempt in range(1, attempts + 1):
             try:
                 response = await self._post_moderation(url, api_key, payload, proxy)
-                hits = self._parse_moderation_result(response, rules)
+                hits, result = self._parse_moderation_result(response, rules)
+                detail.update(
+                    flagged=bool(self._to_bool(result.get("flagged"))),
+                    scores=self._extract_moderation_scores(result),
+                    hits=list(hits),
+                    blocked=bool(hits),
+                )
                 if hits:
                     return False, f"{position}命中 Moderation 拦截: {', '.join(hits)}"
                 return True, "审核通过"
@@ -270,7 +305,19 @@ class SafetyAuditor:
                     )
                     continue
                 logger.warning(f"{LOG} {last_reason}", exc_info=True)
+        detail.update(blocked=True, error=last_reason)
         return False, last_reason
+
+    @staticmethod
+    def _extract_moderation_scores(result: dict[str, object]) -> dict[str, float]:
+        raw_scores = result.get("category_scores")
+        if not isinstance(raw_scores, dict):
+            return {}
+        scores: dict[str, float] = {}
+        for key, value in raw_scores.items():
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                scores[str(key).lower()] = round(float(value), 4)
+        return scores
 
     async def _post_moderation(
         self,
@@ -307,8 +354,8 @@ class SafetyAuditor:
         self,
         response: dict[str, object],
         rules: list[tuple[str, float | None]],
-    ) -> list[str]:
-        """Return blocked category hits from a single-image moderation response."""
+    ) -> tuple[list[str], dict[str, object]]:
+        """Return (blocked hits, raw result) from a single-image moderation response."""
         results = response.get("results")
         if not isinstance(results, list) or len(results) != 1:
             actual = len(results) if isinstance(results, list) else "无"
@@ -316,7 +363,7 @@ class SafetyAuditor:
         result = results[0]
         if not isinstance(result, dict):
             raise RuntimeError("Moderation 返回结果格式异常")
-        return self._collect_moderation_hits(result, rules)
+        return self._collect_moderation_hits(result, rules), result
 
     def _collect_moderation_rules(
         self, settings: ImageAuditSettings
