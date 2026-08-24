@@ -321,6 +321,17 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
             moderation_model=self._get_str(
                 cfg, "moderation_model", ImageAuditSettings.moderation_model
             ),
+            moderation_porn_threshold=self._get_ratio(cfg, "moderation_porn_threshold"),
+            moderation_hentai_threshold=self._get_ratio(
+                cfg, "moderation_hentai_threshold"
+            ),
+            moderation_sexy_threshold=self._get_ratio(cfg, "moderation_sexy_threshold"),
+            moderation_drawings_threshold=self._get_ratio(
+                cfg, "moderation_drawings_threshold"
+            ),
+            moderation_neutral_threshold=self._get_ratio(
+                cfg, "moderation_neutral_threshold"
+            ),
             moderation_blocked_categories=self._parse_string_list(
                 cfg.get("moderation_blocked_categories", [])
             ),
@@ -401,6 +412,17 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
     ) -> int:
         """Read a config value as int and clamp it."""
         return self._coerce_int(cfg.get(key, default), default, min_value=min_value)
+
+    def _get_ratio(self, cfg: dict[str, Any], key: str, default: float = 0.0) -> float:
+        """Read a config value as float clamped to [0, 1]."""
+        value = cfg.get(key, default)
+        if isinstance(value, bool):
+            return default
+        try:
+            ratio = float(value)
+        except (TypeError, ValueError):
+            return default
+        return min(1.0, max(0.0, ratio))
 
     def _parse_enabled_llm_tools(self, raw: Any) -> list[str]:
         """Parse enabled LLM tool names from list config."""

@@ -229,6 +229,35 @@ class SafetyAuditorModerationTest(unittest.TestCase):
         self.assertTrue(allowed)
         self.assertEqual(reason, "")
 
+    def test_slider_threshold_blocks_when_score_reached(self):
+        self.settings.moderation_sexy_threshold = 0.8
+        blocked = _response(
+            _moderation_result(categories={"sexy": False}, scores={"sexy": 0.85})
+        )
+        (allowed, reason), _ = self._run_audit(blocked)
+        self.assertFalse(allowed)
+        self.assertIn("sexy(0.85)", reason)
+
+        passed = _response(
+            _moderation_result(categories={"sexy": False}, scores={"sexy": 0.5})
+        )
+        (allowed, _), _ = self._run_audit(passed)
+        self.assertTrue(allowed)
+
+    def test_slider_threshold_zero_is_disabled(self):
+        self.settings.moderation_porn_threshold = 0.0
+        response = _response(
+            _moderation_result(categories={"porn": False}, scores={"porn": 0.99})
+        )
+        (allowed, _), _ = self._run_audit(response)
+        self.assertTrue(allowed)
+
+    def test_slider_thresholds_combine_with_extra_rules(self):
+        self.settings.moderation_hentai_threshold = 0.7
+        self.settings.moderation_blocked_categories = ["porn:0.5"]
+        rules = self.auditor._collect_moderation_rules(self.settings)
+        self.assertEqual(rules, [("hentai", 0.7), ("porn", 0.5)])
+
     def test_rule_parsing_supports_fullwidth_colon_and_invalid_threshold(self):
         rules = self.auditor._parse_moderation_rules(
             ["porn：0.6", "hentai:abc", " ", "SEXY"]

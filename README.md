@@ -155,7 +155,8 @@
 | Moderation 接口地址 | OpenAI 兼容 Moderation 服务的 Base URL，默认 `https://ai.gitee.com/v1`，实际请求 `{接口地址}/moderations`。 |
 | Moderation API 密钥 | Moderation 服务的 API Key。                                            |
 | Moderation 模型     | 审核模型名称，默认 `nsfw-classifier`（分类：`porn`、`hentai`、`sexy`、`drawings`、`neutral`）。 |
-| Moderation 额外拦截类别 | 留空时仅按接口返回的 `flagged` 判定；每行一个类别名（命中即拦截），或 `类别:阈值`（如 `sexy:0.8`）按置信度分数拦截。 |
+| 各分类拦截阈值滑条  | `porn`（真人色情）、`hentai`（二次元色情）、`sexy`（性感擦边）、`drawings`（普通绘画）、`neutral`（正常内容）五个 0~1 滑条；置信度达到阈值即拦截，0 表示不按该类别拦截。 |
+| Moderation 额外拦截规则（高级） | 与阈值滑条叠加生效；接口返回 `flagged` 时始终拦截。每行一个类别名（命中即拦截），或 `类别:阈值`（如 `sexy:0.8`），适合自定义 Moderation 模型的类别。 |
 | Moderation 代理地址 | HTTP 代理，例如 `http://127.0.0.1:7890`；留空直连。                    |
 | 启用 AI 图片审核    | 生图后、发送前调用对话模型审核生成图片。                               |
 | AI 图片审核提示词   | 图片审核模板；只有显式写入 `{prompt}` 时才附带生图提示词。             |

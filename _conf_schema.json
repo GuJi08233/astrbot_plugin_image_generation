@@ -1605,9 +1605,64 @@
             "type": "string",
             "default": "nsfw-classifier"
           },
+          "moderation_porn_threshold": {
+            "description": "porn 拦截阈值（真人色情）",
+            "hint": "真人露骨色情内容。图片该类别置信度大于等于此值时拦截；0 表示不按此类别拦截，仅由接口 flagged 判定。数值越低越严格，建议 0.5~0.8。",
+            "type": "float",
+            "slider": {
+              "min": 0,
+              "max": 1,
+              "step": 0.01
+            },
+            "default": 0
+          },
+          "moderation_hentai_threshold": {
+            "description": "hentai 拦截阈值（二次元色情）",
+            "hint": "二次元/动漫风格的色情内容。图片该类别置信度大于等于此值时拦截；0 表示不按此类别拦截。数值越低越严格，建议 0.5~0.8。",
+            "type": "float",
+            "slider": {
+              "min": 0,
+              "max": 1,
+              "step": 0.01
+            },
+            "default": 0
+          },
+          "moderation_sexy_threshold": {
+            "description": "sexy 拦截阈值（性感擦边）",
+            "hint": "性感、暴露但未达色情的擦边内容（如泳装、内衣）。图片该类别置信度大于等于此值时拦截；0 表示不按此类别拦截。想放行泳装类内容可设高一些（如 0.9）或保持 0。",
+            "type": "float",
+            "slider": {
+              "min": 0,
+              "max": 1,
+              "step": 0.01
+            },
+            "default": 0
+          },
+          "moderation_drawings_threshold": {
+            "description": "drawings 拦截阈值（普通绘画）",
+            "hint": "普通二次元插画、绘画类内容（非色情）。一般无需拦截，保持 0 即可；仅在想完全禁止绘画风格输出时设置。",
+            "type": "float",
+            "slider": {
+              "min": 0,
+              "max": 1,
+              "step": 0.01
+            },
+            "default": 0
+          },
+          "moderation_neutral_threshold": {
+            "description": "neutral 拦截阈值（正常内容）",
+            "hint": "正常安全内容。一般无需拦截，保持 0 即可；此项主要用于测试拦截链路是否生效。",
+            "type": "float",
+            "slider": {
+              "min": 0,
+              "max": 1,
+              "step": 0.01
+            },
+            "default": 0
+          },
           "moderation_blocked_categories": {
-            "description": "Moderation 额外拦截类别",
-            "hint": "留空时仅按接口返回的 flagged 判定。每行一个类别名（nsfw-classifier 支持 porn、hentai、sexy、drawings、neutral），命中该类别即拦截；也支持 类别:阈值 写法（如 sexy:0.8）按置信度分数拦截。",
+            "description": "Moderation 额外拦截规则（高级）",
+            "hint": "与上方阈值滑条叠加生效，命中任一规则即拦截；接口返回 flagged 时始终拦截。适合自定义 Moderation 模型的类别：每行一个类别名（命中即拦截），或 类别:阈值 写法（如 sexy:0.8）按置信度分数拦截。",
             "type": "list",
             "default": []
           },

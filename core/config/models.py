@@ -106,6 +106,11 @@ class ImageAuditSettings:
     moderation_api_base: str = DEFAULT_MODERATION_API_BASE
     moderation_api_key: str = ""
     moderation_model: str = DEFAULT_MODERATION_MODEL
+    moderation_porn_threshold: float = 0.0
+    moderation_hentai_threshold: float = 0.0
+    moderation_sexy_threshold: float = 0.0
+    moderation_drawings_threshold: float = 0.0
+    moderation_neutral_threshold: float = 0.0
     moderation_blocked_categories: list[str] = field(default_factory=list)
     moderation_proxy: str = ""
     enable_ai_audit: bool = False

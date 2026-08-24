@@ -209,7 +209,7 @@ class SafetyAuditor:
         url = settings.moderation_api_base.strip().rstrip("/") + "/moderations"
         model = settings.moderation_model.strip()
         proxy = settings.moderation_proxy.strip() or None
-        rules = self._parse_moderation_rules(settings.moderation_blocked_categories)
+        rules = self._collect_moderation_rules(settings)
         total = len(image_paths)
 
         # Gitee AI 的 /moderations 每次请求只接受一张图片，逐张审核。
@@ -317,6 +317,26 @@ class SafetyAuditor:
         if not isinstance(result, dict):
             raise RuntimeError("Moderation 返回结果格式异常")
         return self._collect_moderation_hits(result, rules)
+
+    def _collect_moderation_rules(
+        self, settings: ImageAuditSettings
+    ) -> list[tuple[str, float | None]]:
+        """Combine slider thresholds (0 = disabled) with the extra category rules."""
+        rules: list[tuple[str, float | None]] = [
+            (name, threshold)
+            for name, threshold in (
+                ("porn", settings.moderation_porn_threshold),
+                ("hentai", settings.moderation_hentai_threshold),
+                ("sexy", settings.moderation_sexy_threshold),
+                ("drawings", settings.moderation_drawings_threshold),
+                ("neutral", settings.moderation_neutral_threshold),
+            )
+            if threshold > 0
+        ]
+        rules.extend(
+            self._parse_moderation_rules(settings.moderation_blocked_categories)
+        )
+        return rules
 
     def _parse_moderation_rules(
         self, blocked_categories: list[str]
