@@ -19,12 +19,15 @@ from astrbot.api.web import (
     request,
 )
 
-from ..shared.logging import safe_log_text
+from astrbot.api import logger
+
+from ..shared.logging import log_prefix, safe_log_text
 from ..shared.types import ImageCapability
 from ..tasks.models import GenerationTaskRecord
 
 PLUGIN_NAME = "astrbot_plugin_image_generation"
 PAGE_PREVIEW_MAX_BYTES = 12 * 1024 * 1024
+LOG = log_prefix("Page")
 PAGE_IMAGE_EXTENSIONS = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -108,6 +111,24 @@ class ImageGenerationPageAPI:
                 self.page_test_audit,
                 ["POST"],
                 "Test safety audit from Page",
+            ),
+            (
+                "/page/tasks/<task_id>/delete",
+                self.page_delete_task,
+                ["POST"],
+                "Delete finished task from Page",
+            ),
+            (
+                "/page/tasks/cleanup",
+                self.page_cleanup_tasks,
+                ["POST"],
+                "Cleanup finished tasks from Page",
+            ),
+            (
+                "/page/tasks/<task_id>/images/<image_index>/delete",
+                self.page_delete_task_image,
+                ["POST"],
+                "Delete one generated image from Page",
             ),
         ]
         for route, handler, methods, description in page_routes:
@@ -966,6 +987,141 @@ class ImageGenerationPageAPI:
                     1 for item in page_items if item.get("available")
                 ),
                 "models": sorted(model_names),
+            }
+        )
+
+    def _page_allowed_image_roots(self) -> list[Path]:
+        """Return directories that Page-managed result files must live in."""
+        return [
+            self.plugin.image_temp_dir.resolve(),
+            self.plugin.astrbot_temp_dir.resolve(),
+        ]
+
+    def _delete_result_files(self, paths: list[str]) -> int:
+        """Delete result files that live under the allowed image roots."""
+        removed = 0
+        roots = self._page_allowed_image_roots()
+        for path_value in paths:
+            try:
+                path = Path(path_value).resolve()
+            except OSError:
+                continue
+            if not any(self._path_is_under(path, root) for root in roots):
+                continue
+            try:
+                path.unlink(missing_ok=True)
+                removed += 1
+            except OSError:
+                logger.warning(
+                    f"{LOG} 删除结果图片失败: {safe_log_text(str(path), 160)}"
+                )
+        return removed
+
+    @staticmethod
+    def _path_is_under(path: Path, root: Path) -> bool:
+        try:
+            path.relative_to(root)
+        except ValueError:
+            return False
+        return True
+
+    async def page_delete_task(self, task_id: str):
+        """Delete one finished task record and optionally its result files.
+
+        Returns:
+            A JSON response with the number of removed files.
+        """
+        payload = await request.json(default={})
+        delete_files = True
+        if isinstance(payload, dict) and "delete_files" in payload:
+            delete_files = bool(payload.get("delete_files"))
+        record = self.plugin.task_manager.get_generation_task(task_id)
+        if not record:
+            return error_response("任务不存在", status_code=404)
+        if record.is_active:
+            return error_response("任务仍在进行中，请先取消", status_code=400)
+        removed_record = self.plugin.task_manager.delete_generation_task(task_id)
+        if not removed_record:
+            return error_response("任务删除失败", status_code=400)
+        files_removed = (
+            self._delete_result_files(removed_record.result_paths)
+            if delete_files
+            else 0
+        )
+        return json_response(
+            {"ok": True, "task_id": task_id, "files_removed": files_removed}
+        )
+
+    async def page_cleanup_tasks(self):
+        """Cleanup finished task records older than N days (0 = all finished).
+
+        Returns:
+            A JSON response with removed record and file counts.
+        """
+        payload = await request.json(default={})
+        days = 0
+        delete_files = True
+        if isinstance(payload, dict):
+            try:
+                days = max(0, int(payload.get("days") or 0))
+            except (TypeError, ValueError):
+                days = 0
+            if "delete_files" in payload:
+                delete_files = bool(payload.get("delete_files"))
+        cutoff = datetime.now() - timedelta(days=days) if days > 0 else None
+
+        candidates = self.plugin.task_manager.list_generation_tasks(limit=1_000_000)
+        removed = 0
+        files_removed = 0
+        for record in candidates:
+            if record.is_active:
+                continue
+            if cutoff is not None:
+                finished_at = (
+                    record.finished_at or record.started_at or record.created_at
+                )
+                if finished_at >= cutoff:
+                    continue
+            deleted = self.plugin.task_manager.delete_generation_task(record.task_id)
+            if not deleted:
+                continue
+            removed += 1
+            if delete_files:
+                files_removed += self._delete_result_files(deleted.result_paths)
+        return json_response(
+            {"ok": True, "removed": removed, "files_removed": files_removed}
+        )
+
+    async def page_delete_task_image(self, task_id: str, image_index: str):
+        """Delete one generated image file and drop it from the task record.
+
+        Returns:
+            A JSON response with the remaining image count.
+        """
+        record = self.plugin.task_manager.get_generation_task(task_id)
+        if not record:
+            return error_response("任务不存在", status_code=404)
+        if record.is_active:
+            return error_response("任务仍在进行中，请先取消", status_code=400)
+        try:
+            index = int(str(image_index).strip())
+        except (TypeError, ValueError):
+            return error_response("图片序号无效", status_code=400)
+        if index < 1 or index > len(record.result_paths):
+            return error_response("图片序号无效", status_code=400)
+        path_value = record.result_paths[index - 1]
+        files_removed = self._delete_result_files([path_value])
+        removed_path = self.plugin.task_manager.remove_generation_task_image(
+            task_id, index
+        )
+        if removed_path is None:
+            return error_response("图片删除失败", status_code=400)
+        return json_response(
+            {
+                "ok": True,
+                "task_id": task_id,
+                "files_removed": files_removed,
+                "remaining": len(record.result_paths),
             }
         )
 

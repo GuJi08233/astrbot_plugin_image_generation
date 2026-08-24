@@ -126,6 +126,15 @@ const FALLBACK = {
   'audit.imageResult': '图片审核',
   'audit.testDisabledPrompt': '提示词审核未启用（无屏蔽词且未开启 AI 提示词审核），任何提示词都会通过。',
   'audit.testDisabledImage': '图片审核未启用（Moderation 接口审核与 AI 图片审核均关闭），任何图片都会通过。',
+  'tasks.cleanup': '清理已结束',
+  'tasks.cleanupConfirm': '确定清理全部已结束任务？将删除任务记录及其图片文件，且不可恢复。',
+  'tasks.cleanupDone': '已清理 {removed} 个任务，删除 {files} 个图片文件',
+  'detail.delete': '删除任务',
+  'detail.deleteConfirm': '确定删除该任务？将删除任务记录及其图片文件，且不可恢复。',
+  'message.taskDeleted': '任务已删除',
+  'gallery.delete': '删除',
+  'gallery.deleteConfirm': '确定删除这张图片？文件将被删除且不可恢复。',
+  'message.imageDeleted': '图片已删除',
   'message.stateLoaded': '状态已刷新',
   'message.taskSubmitted': '任务已提交',
   'message.uploaded': '参考图已上传',
@@ -1259,7 +1268,7 @@ function renderDetail(task) {
       </div>
       <div class="detail-actions">
         <span class="badge ${escapeHtml(task.status)}">${escapeHtml(statusLabel(task.status, task.status_label))}</span>
-        ${active ? `<button class="btn danger" id="cancelTaskBtn" type="button">${escapeHtml(t('detail.cancel'))}</button>` : ''}
+        ${active ? `<button class="btn danger" id="cancelTaskBtn" type="button">${escapeHtml(t('detail.cancel'))}</button>` : `<button class="btn danger" id="deleteTaskBtn" type="button">${escapeHtml(t('detail.delete'))}</button>`}
       </div>
     </div>
     ${promptBlock}
@@ -1801,6 +1810,54 @@ async function cancelSelectedTask() {
   }
 }
 
+async function deleteSelectedTask() {
+  if (!appState.selectedTaskId) return;
+  if (!window.confirm(t('detail.deleteConfirm'))) return;
+  try {
+    await apiPost(`page/tasks/${encodeURIComponent(appState.selectedTaskId)}/delete`, {});
+    showToast(t('message.taskDeleted'));
+    appState.selectedTaskId = '';
+    appState.selectedTask = null;
+    renderEmptyDetail();
+    await loadTasks({ resetOffset: true });
+  } catch (error) {
+    showToast(error.message || t('error.generic'), true);
+  }
+}
+
+async function cleanupFinishedTasks() {
+  if (!window.confirm(t('tasks.cleanupConfirm'))) return;
+  try {
+    const result = await apiPost('page/tasks/cleanup', {});
+    showToast(
+      t('tasks.cleanupDone', {
+        removed: result.removed || 0,
+        files: result.files_removed || 0,
+      }),
+    );
+    appState.selectedTaskId = '';
+    appState.selectedTask = null;
+    renderEmptyDetail();
+    await loadTasks({ resetOffset: true });
+  } catch (error) {
+    showToast(error.message || t('error.generic'), true);
+  }
+}
+
+async function deleteGalleryImage(taskId, imageIndex) {
+  if (!window.confirm(t('gallery.deleteConfirm'))) return;
+  try {
+    await apiPost(
+      `page/tasks/${encodeURIComponent(taskId)}/images/${encodeURIComponent(imageIndex)}/delete`,
+      {},
+    );
+    showToast(t('message.imageDeleted'));
+    await loadGallery();
+  } catch (error) {
+    showToast(error.message || t('error.generic'), true);
+  }
+}
+
 async function downloadImage(endpoint, filename) {
   try {
     await appState.bridge.download(endpoint, {}, filename || 'image.png');
@@ -1867,6 +1924,7 @@ function renderGallery() {
           <div class="gallery-actions">
             <button class="btn subtle" type="button" data-gallery-task="${escapeHtml(item.task_id)}">${escapeHtml(t('gallery.openTask'))}</button>
             <button class="btn primary" type="button" data-download-endpoint="${escapeHtml(item.download_endpoint || '')}" data-download-name="${escapeHtml(item.filename || '')}" ${available ? '' : 'disabled'}>${escapeHtml(t('detail.download'))}</button>
+            <button class="btn danger" type="button" data-gallery-delete data-gallery-task-id="${escapeHtml(item.task_id)}" data-gallery-image-index="${escapeHtml(item.image_index)}">${escapeHtml(t('gallery.delete'))}</button>
           </div>
         </div>
       </article>`;
@@ -1957,6 +2015,14 @@ function bindEvents() {
     galleryKeywordTimer = window.setTimeout(() => loadGallery(), 280);
   });
   $('#galleryGrid')?.addEventListener('click', (event) => {
+    const deleteButton = event.target.closest('[data-gallery-delete]');
+    if (deleteButton) {
+      deleteGalleryImage(
+        deleteButton.dataset.galleryTaskId,
+        deleteButton.dataset.galleryImageIndex,
+      );
+      return;
+    }
     const taskButton = event.target.closest('[data-gallery-task]');
     if (taskButton) {
       openTask(taskButton.dataset.galleryTask);
@@ -1997,6 +2063,7 @@ function bindEvents() {
     renderAuditUploads();
   });
   $('#auditTestBtn')?.addEventListener('click', () => runAuditTest());
+  $('#tasksCleanupBtn')?.addEventListener('click', () => cleanupFinishedTasks());
   document.querySelectorAll('.tab-btn').forEach((button) => {
     button.addEventListener('click', () => setView(button.dataset.view));
   });
@@ -2052,6 +2119,10 @@ function bindEvents() {
   $('#detailPanel')?.addEventListener('click', (event) => {
     if (event.target.id === 'cancelTaskBtn') {
       cancelSelectedTask();
+      return;
+    }
+    if (event.target.id === 'deleteTaskBtn') {
+      deleteSelectedTask();
       return;
     }
     if (event.target.id === 'togglePromptBtn') {

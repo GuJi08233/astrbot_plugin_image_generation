@@ -678,6 +678,40 @@ class TaskManager(
         self.mark_generation_task_cancelled(task_id)
         return True, f"✅ 任务已取消: {task_id}"
 
+    def delete_generation_task(self, task_id: str) -> GenerationTaskRecord | None:
+        """Delete one finished generation task record.
+
+        Returns:
+            The removed record (so callers can clean up result files), or
+            ``None`` when the task is missing or still active.
+        """
+        record = self._generation_tasks.get(task_id)
+        if not record or record.is_active:
+            return None
+        del self._generation_tasks[task_id]
+        self._discard_generation_task_bookkeeping(task_id)
+        self._save_generation_tasks()
+        return record
+
+    def remove_generation_task_image(
+        self, task_id: str, image_index: int
+    ) -> str | None:
+        """Remove one result image path (1-based) from a finished task record.
+
+        Returns:
+            The removed path, or ``None`` when the task is active or the
+            index is out of range.
+        """
+        record = self._generation_tasks.get(task_id)
+        if not record or record.is_active:
+            return None
+        if image_index < 1 or image_index > len(record.result_paths):
+            return None
+        removed = record.result_paths.pop(image_index - 1)
+        record.result_count = len(record.result_paths)
+        self._save_generation_tasks()
+        return removed
+
     def cleanup_generation_tasks(self, *, unified_msg_origin: str | None = None) -> int:
         """Remove finished generation task records."""
         removed = 0
