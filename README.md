@@ -16,7 +16,7 @@
 - 模型动态切换：通过指令查看和切换模型。
 - 多图任务：单个任务可生成多张图片，支持请求级并发、任务级队列和分批发送。
 - LLM 工具调用：可作为 LLM 工具自动生图、查询预设/人设、管理生图任务，也可按配置启用预设编辑工具。
-- 预设与人设：支持普通预设、高级 JSON 预设、多人设拼接和人设参考图。
+- 预设与人设：支持普通预设、高级 JSON 预设、多人设拼接、人设参考图；可选在提示词正文中按名称匹配。
 - 使用限制：支持会话黑名单、管理员/白名单绕过、请求频率限制、每日额度和参考图大小限制。
 - 安全审核：支持屏蔽词、AI 提示词审核、Moderation 接口图片审核（如模力方舟 nsfw-classifier）、AI 图片审核和审核白名单；WebUI 任务详情可查看每张图的审核分类分数、命中规则和被拦截的图片，生成页提供审核测试工具（不生图直接测提示词/图片审核），任务详情和图库支持对已生成图片按当前配置复审。
 - 插件间公共 API：其他插件可提交任务、查询状态、取消任务、等待结果并获取本地图片路径。
@@ -25,7 +25,7 @@
 
 | 命令                                                                  | 说明                                                                                                                                       |
 | :-------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------- |
-| `/生图 <预设/人设...> [额外提示词] [数量]` 或 `/生图 <提示词> [数量]` | 生成图片。开头连续命中的预设/人设会依次应用；末尾单独数字表示生成数量；消息、引用消息、@ 用户和人设参考图会作为参考图。                   |
+| `/生图 <预设/人设...> [额外提示词] [数量]` 或 `/生图 <提示词> [数量]` | 生成图片。默认从开头连续匹配预设/人设名称；开启“提示词正文匹配”后才扫描正文。末尾单独数字表示生成数量；消息、引用消息、@ 用户和人设参考图会作为参考图。 |
 | `/生图任务`                                                           | 查看当前会话正在进行的生图任务，并显示编号。                                                                                               |
 | `/生图任务 <编号或任务ID>`                                            | 查看任务详情。编号仅匹配当前列表中的进行中任务；完整任务 ID 可查看仍保留记录的已结束任务。                                                  |
 | `/生图取消 <编号或任务ID>`                                            | 取消当前会话中仍在排队、运行或取消中的生图任务。                                                                                           |
@@ -48,7 +48,7 @@
 | `agnes_ai`            | Agnes AI Images API `/v1/images/generations`                   |   ✅    |   ✅    |    ✅     | 支持 `agnes-image-2.0-flash` 和 `agnes-image-2.1-flash`；参考图通过 `extra_body.image` 数组发送。 |
 | `jimeng2api`          | jimeng-api `/v1/images/generations`、`/v1/images/compositions` |   ✅    |   ✅    |    ✅     | 适用于 [iptag/jimeng-api](https://github.com/iptag/jimeng-api)，支持启动和每日自动领积分任务。   |
 | `grok`                | xAI Images API `/v1/images/generations`、`/v1/images/edits`    |   ✅    |   ✅    |    ✅     | 按 xAI 官方 JSON 格式请求；单图用 `image`，多图用 `images`（最多 3 张）。                       |
-| `codex_responses`     | Codex Responses API `/codex/responses`                         |   ✅    |   ✅    |    ❌     | 固定请求 `model`、`input` 和 `image_generation` 工具；支持同步图像编辑。                         |
+| `codex_responses`     | Codex / OpenAI Responses API                                   |   ✅    |   ✅    |    ❌     | 固定请求 `model`、`input` 和 `image_generation` 工具；接口路径默认为 `/codex/responses`，可改为 `/v1/responses`。 |
 | `modelscope`          | ModelScope API-Inference `/v1/images/generations` + task poll  |   ✅    | 按配置 | 按配置 | 异步提交、轮询并下载结果；收到远端任务 ID 后不会自动重新提交；详见 [ModelScope 接口配置](docs/modelscope.md)。 |
 | `custom_http`         | 用户自定义 HTTP JSON 接口                                      |   ✅    |   ✅    |    ✅     | 高级接口模板，详见 [自定义 HTTP 接口配置](docs/custom-http.md)。                                |
 
@@ -80,12 +80,12 @@
 常见专属配置：
 
 - `openai_chat`：可配置提示词前缀、`modalities` 和额外请求体 JSON。
-- `openai`：可选择模型系列，`auto` 会按模型名识别 GPT Image 或 DALL-E 请求格式。
+- `openai`：可选择模型系列，`auto` 会按模型名识别 GPT Image 或 DALL-E 请求格式；文生图默认可使用 SSE，不支持流式的兼容站点可关闭该开关。GPT Image 可选择 png/jpeg/webp 输出格式，默认 png。
 - `volcengine_ark`：可配置水印、组图模式、最大参考图数量、提示词优化模式和联网搜索；Seedream 5.0 Pro 会自动跳过组图与联网搜索参数，并将参考图上限限制为 10。
 - `gitee_ai`：可通过图像接口模式自动或手动选择 `generations` / `edits`。
 - `siliconflow_adapter`：可配置反向提示词、推理步数和提示词遵循强度。
 - `agnes_ai`：可选择 `base64` 或 `url` 响应格式；图生图参考图通过 `extra_body.image` 数组发送。
-- `codex_responses`：固定向 `POST /codex/responses` 发送 `model`、`input` 与 `tools: [{"type":"image_generation","output_format":"png"}]`；填写服务根地址后会自动拼接路径，使用 Bearer API Key。无参考图时发送文本 `input`，有参考图时发送多模态 Responses `input`，仅支持同步结果；详见 [Codex Responses 接口配置](docs/codex-responses.md)。
+- `codex_responses`：固定发送 `model`、`input` 与 `tools: [{"type":"image_generation","output_format":"png"}]`；填写服务根地址和接口路径（默认 `/codex/responses`，标准 Responses 可填 `/v1/responses`），使用 Bearer API Key。无参考图时发送文本 `input`，有参考图时发送多模态 Responses `input`，仅支持同步结果；详见 [Codex Responses 接口配置](docs/codex-responses.md)。
 - `modelscope`：调用 API-Inference 异步图像接口，使用 ModelScope Access Token 提交、轮询并下载结果；可配置轮询间隔、总等待时间、反向提示词和尺寸映射。默认模板仅启用文生图；需要模型明确支持后才启用图生图。收到 `task_id` 后不会通过外层重试重新提交任务；详见 [ModelScope 接口配置](docs/modelscope.md)。
 - `custom_http`：可配置请求方法、请求头、查询参数、请求体、图片结果路径、结果类型、错误路径和成功状态码。
 
@@ -165,18 +165,19 @@
 
 预设提示词和人设模板在同一个配置组中维护。
 
-| 配置名       | 说明                                           |
-| :----------- | :--------------------------------------------- |
-| 预设提示词   | 预定义提示词模板，可通过 `/预设` 命令增删。    |
-| 人设名称     | 用于 `/生图 <人设名称...> [额外提示词]` 匹配。 |
-| 人设文本描述 | 使用该人设生图时会作为人物设定提示词。         |
-| 人设参考图   | 可选；当前模型支持图生图时会自动作为参考图。   |
+| 配置名           | 默认值 | 说明                                                                 |
+| :--------------- | :----- | :------------------------------------------------------------------- |
+| 提示词正文匹配   | 关闭   | 可勾选预设、人设或两者。默认关闭，保持仅从提示词开头连续词匹配。     |
+| 预设提示词       | 内置   | 预定义提示词模板，可通过 `/预设` 命令增删。                          |
+| 人设名称         |        | 用于 `/生图` 开头名称、显式人设参数，以及可选的提示词正文匹配。      |
+| 人设文本描述     |        | 使用该人设生图时会作为人物设定提示词。                               |
+| 人设参考图       |        | 可选；当前模型支持图生图时会自动作为参考图。                         |
 
 简单预设格式：`名称:提示词`。
 
 高级预设格式：`名称:{"prompt":"提示词","aspect_ratio":"16:9","resolution":"2K","description":"描述"}`。
 
-`/预设` 会同时展示预设和人设。预设与人设同名时，`/生图` 优先使用预设。`/生图` 会从提示词开头按空格连续解析多个预设或人设，遇到第一个未命中的词后，剩余内容作为额外提示词；末尾单独数字会被解析为生成数量，不参与预设/人设和提示词内容。
+`/预设` 会同时展示预设和人设。预设与人设同名时优先使用预设。默认情况下 `/生图` 只从开头连续词匹配名称。开启“提示词正文匹配”后，`/生图`、LLM 生图工具和公共 API 会在提示词正文中扫描已勾选类型的名称：较长名称优先，每个名称最多应用一次，命中后从附加提示词中移除该名称。英文名称按单词边界匹配，避免 `cat` 命中 `category`；中文名称按子串匹配。末尾单独数字仍会被解析为生成数量，不参与预设/人设和提示词内容。
 
 ### LLM 工具
 
@@ -227,6 +228,7 @@ LLM 生图工具支持 `preset`、`persona`、`aspect_ratio`、`resolution`、`i
 
 ```text
 /生图 手办化 看板娘 夜景 微笑
+/生图 画一张看板娘手办化夜景
 ```
 
 一次生成多张：
@@ -278,6 +280,7 @@ LLM 生图工具支持 `preset`、`persona`、`aspect_ratio`、`resolution`、`i
 - 火山方舟的可用模型列表需要按控制台实际 Model ID 或 Endpoint ID 配置。
 - 配置 `jimeng2api` 后，插件会在启动时和每天日期变更后自动领取积分；仅直接连接即梦逆向服务时有效。
 - 即梦逆向图生图使用 `/v1/images/compositions`，使用中转可能会导致图生图失败。
+- OpenAI Images 文生图默认使用 SSE。中转缓冲或截断大型完成事件时可关闭“使用 SSE 流式请求”，并把 GPT Image 输出格式改为 JPEG/WebP 以缩小 Base64 响应。
 - Codex Responses 接口支持在单次 HTTP 请求内返回最终图片的文生图和图生图；参考图会作为多模态 `input_image` data URL 发送，但宽高比和分辨率会被忽略。若日志在约 150 秒显示 `Server disconnected`、后续任务仍成功，通常是服务端或中间网络主动断开后触发了插件重试，而不是本插件的请求超时；详见 [Codex Responses 接口配置](docs/codex-responses.md)。
 - 自定义 HTTP 接口为高级功能，建议先阅读 [自定义 HTTP 接口配置](docs/custom-http.md)。
 - 开启调试请求日志或详细错误信息时，插件会做脱敏和摘要处理，但仍建议避免在公共环境暴露日志。

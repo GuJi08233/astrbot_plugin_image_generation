@@ -292,6 +292,23 @@
               "dall-e"
             ],
             "default": "auto"
+          },
+          "enable_streaming": {
+            "description": "使用 SSE 流式请求",
+            "hint": "文生图默认开启 SSE。部分兼容站点不支持流式时可关闭，改为普通 JSON 响应。",
+            "type": "bool",
+            "default": true
+          },
+          "output_format": {
+            "description": "GPT Image 输出格式",
+            "hint": "PNG 保留无损质量；JPEG 响应更小，适合会截断大型 Base64 响应的中转接口。仅影响 GPT Image 系列。",
+            "type": "string",
+            "options": [
+              "png",
+              "jpeg",
+              "webp"
+            ],
+            "default": "png"
           }
         }
       },
@@ -1019,7 +1036,7 @@
       },
       "codex_responses": {
         "name": "Codex Responses 接口",
-        "hint": "调用 Codex Responses 图像接口 /codex/responses。",
+        "hint": "调用 Codex / OpenAI Responses 图像接口；接口路径默认为 /codex/responses，也可填写 /v1/responses。",
         "display_item": "name",
         "hide_hint_in_list": true,
         "items": {
@@ -1031,9 +1048,15 @@
           },
           "base_url": {
             "description": "接口地址",
-            "hint": "填写 OpenAI 官方 Codex 入口 https://chatgpt.com/backend-api/codex/responses，或填写根地址 https://chatgpt.com/backend-api；插件会自动规范化并拼接 /codex/responses，不要填写查询参数。",
+            "hint": "填写服务根地址，例如 https://baobao-ai.com 或 https://api.example.com；不要填写查询参数。实际请求地址由该地址与下方接口路径拼接。",
             "type": "string",
             "default": ""
+          },
+          "endpoint": {
+            "description": "接口路径",
+            "hint": "相对接口地址拼接。默认 /codex/responses；标准 OpenAI Responses 可填 /v1/responses。",
+            "type": "string",
+            "default": "/codex/responses"
           },
           "proxy": {
             "description": "代理地址",
@@ -1708,9 +1731,19 @@
   },
   "prompt_templates": {
     "description": "提示词模板",
-    "hint": "集中配置预设提示词和人设模板；可通过 /预设 查看，通过 /生图 按名称使用。",
+    "hint": "集中配置预设提示词和人设模板；可通过 /预设 查看，通过 /生图 按名称使用。默认只从提示词开头连续匹配名称。",
     "type": "object",
     "items": {
+      "prompt_body_template_match": {
+        "description": "提示词正文匹配",
+        "hint": "默认关闭，保持仅从提示词开头连续词匹配。勾选后才在提示词正文中匹配对应名称；可只匹配人设、只匹配预设，或两者都匹配。",
+        "type": "list",
+        "options": [
+          "预设",
+          "人设"
+        ],
+        "default": []
+      },
       "presets": {
         "description": "预设提示词",
         "hint": "每项格式为“名称:提示词”；也支持 JSON 配置 prompt、aspect_ratio、resolution 和 description。",
@@ -1726,7 +1759,7 @@
       },
       "personas": {
         "description": "人设模板",
-        "hint": "配置固定人设描述和参考图；使用 /生图 <人设名称> [额外提示词] 时自动应用。",
+        "hint": "配置固定人设描述和参考图；/生图 开头名称或显式人设参数命中时自动应用。开启“提示词正文匹配”后也可在正文中匹配。",
         "type": "template_list",
         "default": [],
         "templates": {
@@ -1738,7 +1771,7 @@
             "items": {
               "persona_name": {
                 "description": "人设名称",
-                "hint": "用于 /生图 指令匹配。",
+                "hint": "用于 /生图 开头名称、显式人设参数，以及可选的提示词正文匹配。",
                 "type": "string"
               },
               "persona_prompt": {

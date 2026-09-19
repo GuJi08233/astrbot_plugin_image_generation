@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import time
@@ -83,7 +84,16 @@ class OpenAIAdapter(BaseImageAdapter):
             url = f"{base}/v1/images/generations"
             headers["Content-Type"] = "application/json"
             payload = self._build_payload(request)
-            if is_gpt:
+            enable_streaming = self.config.extra.get("enable_streaming", True)
+            if isinstance(enable_streaming, str):
+                enable_streaming = enable_streaming.strip().lower() not in {
+                    "false",
+                    "0",
+                    "no",
+                    "off",
+                    "",
+                }
+            if enable_streaming:
                 payload["stream"] = True
             kwargs = {"json": payload}
             self._log_request_overview(request, url, payload=payload)
@@ -113,11 +123,7 @@ class OpenAIAdapter(BaseImageAdapter):
                         resp.status,
                         error_text,
                     )
-                if (
-                    is_gpt
-                    and "text/event-stream"
-                    in resp.headers.get("Content-Type", "").lower()
-                ):
+                if "text/event-stream" in resp.headers.get("Content-Type", "").lower():
                     data = await self._read_stream_response(resp, request.task_id)
                 else:
                     data = await self._read_response_json(resp, request.task_id)
@@ -219,8 +225,13 @@ class OpenAIAdapter(BaseImageAdapter):
         if size := self._map_aspect_ratio_to_size(request.aspect_ratio, gpt_model=gpt):
             payload["size"] = size
         # OpenAI models do not support the plugin resolution setting; quality is separate.
-        if not gpt:
-            # GPT Image models always return b64_json and do not support response_format.
+        if gpt:
+            output_format = str(self.config.extra.get("output_format") or "png").lower()
+            payload["output_format"] = (
+                output_format if output_format in {"png", "jpeg", "webp"} else "png"
+            )
+        else:
+            # Keep DALL-E results self-contained for local persistence.
             payload["response_format"] = "b64_json"
 
         return payload
@@ -279,32 +290,41 @@ class OpenAIAdapter(BaseImageAdapter):
             elif "url" in item:
                 # Download URL results even though b64_json is requested.
                 image_url = str(item["url"])
-                download_start = time.time()
                 prefix = self._get_log_prefix(task_id)
-                logger.debug(f"{prefix} 图片下载开始: 地址={safe_log_url(image_url)}")
-                try:
-                    async with self._get_session().get(
-                        image_url,
-                        proxy=self.proxy,
-                        timeout=self._get_timeout(),
-                    ) as resp:
-                        duration = time.time() - download_start
-                        logger.debug(
-                            f"{prefix} 图片下载响应: 状态码={resp.status}, "
-                            f"耗时={duration:.2f}秒, 地址={safe_log_url(image_url)}"
-                        )
-                        if resp.status == 200:
-                            images.append(await resp.read())
-                        else:
-                            download_error = f"HTTP {resp.status}"
-                except Exception as exc:
-                    duration = time.time() - download_start
-                    detail = safe_log_error_body(exc) or type(exc).__name__
-                    download_error = detail
-                    logger.error(
-                        f"{prefix} 图片下载失败: 耗时={duration:.2f}秒, "
-                        f"错误={detail}, 地址={safe_log_url(image_url)}"
+                for attempt in range(1, 4):
+                    download_start = time.time()
+                    logger.debug(
+                        f"{prefix} 图片下载开始: 尝试={attempt}/3, "
+                        f"地址={safe_log_url(image_url)}"
                     )
+                    try:
+                        async with self._get_session().get(
+                            image_url,
+                            proxy=self.proxy,
+                            timeout=self._get_timeout(),
+                        ) as resp:
+                            duration = time.time() - download_start
+                            logger.debug(
+                                f"{prefix} 图片下载响应: 状态码={resp.status}, "
+                                f"尝试={attempt}/3, 耗时={duration:.2f}秒, "
+                                f"地址={safe_log_url(image_url)}"
+                            )
+                            if resp.status == 200:
+                                images.append(await resp.read())
+                                download_error = None
+                                break
+                            download_error = f"HTTP {resp.status}"
+                    except Exception as exc:
+                        duration = time.time() - download_start
+                        detail = safe_log_error_body(exc) or type(exc).__name__
+                        download_error = detail
+                        logger.warning(
+                            f"{prefix} 图片下载失败: 尝试={attempt}/3, "
+                            f"耗时={duration:.2f}秒, 错误={detail}, "
+                            f"地址={safe_log_url(image_url)}"
+                        )
+                    if attempt < 3:
+                        await asyncio.sleep(2 ** (attempt - 1))
 
         if not images:
             if download_error:
