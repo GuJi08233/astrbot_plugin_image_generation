@@ -127,13 +127,10 @@ const FALLBACK = {
   'audit.testDisabledPrompt': '提示词审核未启用（无屏蔽词且未开启 AI 提示词审核），任何提示词都会通过。',
   'audit.testDisabledImage': '图片审核未启用（Moderation 接口审核与 AI 图片审核均关闭），任何图片都会通过。',
   'tasks.cleanup': '清理已结束',
-  'tasks.cleanupConfirm': '确定清理全部已结束任务？将删除任务记录及其图片文件，且不可恢复。',
   'tasks.cleanupDone': '已清理 {removed} 个任务，删除 {files} 个图片文件',
   'detail.delete': '删除任务',
-  'detail.deleteConfirm': '确定删除该任务？将删除任务记录及其图片文件，且不可恢复。',
   'message.taskDeleted': '任务已删除',
   'gallery.delete': '删除',
-  'gallery.deleteConfirm': '确定删除这张图片？文件将被删除且不可恢复。',
   'message.imageDeleted': '图片已删除',
   'detail.reaudit': '复审图片',
   'gallery.reaudit': '复审',
@@ -1820,7 +1817,6 @@ async function cancelSelectedTask() {
 
 async function deleteSelectedTask() {
   if (!appState.selectedTaskId) return;
-  if (!window.confirm(t('detail.deleteConfirm'))) return;
   try {
     await apiPost(`page/tasks/${encodeURIComponent(appState.selectedTaskId)}/delete`, {});
     showToast(t('message.taskDeleted'));
@@ -1834,7 +1830,6 @@ async function deleteSelectedTask() {
 }
 
 async function cleanupFinishedTasks() {
-  if (!window.confirm(t('tasks.cleanupConfirm'))) return;
   try {
     const result = await apiPost('page/tasks/cleanup', {});
     showToast(
@@ -1888,7 +1883,6 @@ async function reauditTask(taskId, imageIndex) {
 }
 
 async function deleteGalleryImage(taskId, imageIndex) {
-  if (!window.confirm(t('gallery.deleteConfirm'))) return;
   try {
     await apiPost(
       `page/tasks/${encodeURIComponent(taskId)}/images/${encodeURIComponent(imageIndex)}/delete`,
