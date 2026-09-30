@@ -1,6 +1,6 @@
 # Codex Responses 接口配置
 
-`codex_responses` 适配器用于接入采用 OpenAI Responses 风格的同步图片生成接口。它是专用模板：插件固定构造请求、发送 Bearer API Key，并识别 `image_generation_call` 中的图片结果，不需要手动配置请求体或图片路径。
+`codex_responses` 适配器用于接入采用 OpenAI Responses 风格的同步图片生成接口。它是专用模板：插件固定构造请求，通过 `tool_choice` 指定调用生图工具、发送 Bearer API Key，并识别 `image_generation_call` 中的图片结果，不需要手动配置请求体或图片路径。
 
 当前版本支持：
 
@@ -57,6 +57,7 @@ Content-Type: application/json
 {
   "model": "gpt-5.6-terra",
   "input": "生成一张图片：白色背景中央有一个小的纯蓝色实心圆，不要文字。",
+  "tool_choice": {"type": "image_generation"},
   "tools": [
     {
       "type": "image_generation",
@@ -68,6 +69,8 @@ Content-Type: application/json
 
 其中 `input` 使用插件经过预设、人设和附加提示词合并后的最终文本。文本生图不会额外添加 `messages`、`prompt`、`n`、`stream`、`modalities`、`size`、参考图或尺寸字段。工具声明会固定带 `output_format: "png"`，以匹配已验证的宝宝 AI 请求。
 
+文生图和图生图均发送 `tool_choice: {"type":"image_generation"}`，明确要求模型调用生图工具。这样 `/生图 原神` 等仅含主题的提示词也会按生图任务处理，无需用户额外添加“画一个”。提示词正文保持原样。接入服务需要支持这一 Responses 字段；第三方中转是否接受该字段仍需在实际服务上验证。
+
 ## 图像编辑请求
 
 当用户发送、引用或通过 LLM 工具/公共 API 提供参考图时，插件会复用既有的参考图收集、大小校验、文件类型校验、去重和转换链路，并把每张 `ImageData` 按原顺序编码为 `data:<mime>;base64,...`。此时请求使用 Responses 多模态 `input`：
@@ -75,6 +78,7 @@ Content-Type: application/json
 ```json
 {
   "model": "gpt-5.6-terra",
+  "tool_choice": {"type": "image_generation"},
   "input": [
     {
       "role": "user",
@@ -99,7 +103,7 @@ Content-Type: application/json
 }
 ```
 
-这与宝宝 AI 的 `gpt-5.6-terra` 编辑请求和同步成功响应已经核验一致。输出仍从：
+多模态 `input` 格式与宝宝 AI 的 `gpt-5.6-terra` 编辑请求和同步成功响应已经核验一致；新增的 `tool_choice` 尚未在该服务上实测。输出仍从：
 
 ```text
 response.output[i].type == image_generation_call

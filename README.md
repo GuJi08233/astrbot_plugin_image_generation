@@ -48,7 +48,7 @@
 | `agnes_ai`            | Agnes AI Images API `/v1/images/generations`                   |   ✅    |   ✅    |    ✅     | 支持 `agnes-image-2.0-flash` 和 `agnes-image-2.1-flash`；参考图通过 `extra_body.image` 数组发送。 |
 | `jimeng2api`          | jimeng-api `/v1/images/generations`、`/v1/images/compositions` |   ✅    |   ✅    |    ✅     | 适用于 [iptag/jimeng-api](https://github.com/iptag/jimeng-api)，支持启动和每日自动领积分任务。   |
 | `grok`                | xAI Images API `/v1/images/generations`、`/v1/images/edits`    |   ✅    |   ✅    |    ✅     | 按 xAI 官方 JSON 格式请求；单图用 `image`，多图用 `images`（最多 3 张）。                       |
-| `codex_responses`     | Codex / OpenAI Responses API                                   |   ✅    |   ✅    |    ❌     | 固定请求 `model`、`input` 和 `image_generation` 工具；接口路径默认为 `/codex/responses`，可改为 `/v1/responses`。 |
+| `codex_responses`     | Codex / OpenAI Responses API                                   |   ✅    |   ✅    |    ❌     | 通过 `tool_choice` 指定调用 `image_generation` 工具；接口路径默认为 `/codex/responses`，可改为 `/v1/responses`。 |
 | `modelscope`          | ModelScope API-Inference `/v1/images/generations` + task poll  |   ✅    | 按配置 | 按配置 | 异步提交、轮询并下载结果；收到远端任务 ID 后不会自动重新提交；详见 [ModelScope 接口配置](docs/modelscope.md)。 |
 | `custom_http`         | 用户自定义 HTTP JSON 接口                                      |   ✅    |   ✅    |    ✅     | 高级接口模板，详见 [自定义 HTTP 接口配置](docs/custom-http.md)。                                |
 
@@ -85,7 +85,7 @@
 - `gitee_ai`：可通过图像接口模式自动或手动选择 `generations` / `edits`。
 - `siliconflow_adapter`：可配置反向提示词、推理步数和提示词遵循强度。
 - `agnes_ai`：可选择 `base64` 或 `url` 响应格式；图生图参考图通过 `extra_body.image` 数组发送。
-- `codex_responses`：固定发送 `model`、`input` 与 `tools: [{"type":"image_generation","output_format":"png"}]`；填写服务根地址和接口路径（默认 `/codex/responses`，标准 Responses 可填 `/v1/responses`），使用 Bearer API Key。无参考图时发送文本 `input`，有参考图时发送多模态 Responses `input`，仅支持同步结果；详见 [Codex Responses 接口配置](docs/codex-responses.md)。
+- `codex_responses`：固定发送 `model`、`input`、`tools: [{"type":"image_generation","output_format":"png"}]` 与 `tool_choice: {"type":"image_generation"}`，让短提示词也明确调用生图工具；填写服务根地址和接口路径（默认 `/codex/responses`，标准 Responses 可填 `/v1/responses`），使用 Bearer API Key。无参考图时发送文本 `input`，有参考图时发送多模态 Responses `input`，仅支持同步结果；详见 [Codex Responses 接口配置](docs/codex-responses.md)。
 - `modelscope`：调用 API-Inference 异步图像接口，使用 ModelScope Access Token 提交、轮询并下载结果；可配置轮询间隔、总等待时间、反向提示词和尺寸映射。默认模板仅启用文生图；需要模型明确支持后才启用图生图。收到 `task_id` 后不会通过外层重试重新提交任务；详见 [ModelScope 接口配置](docs/modelscope.md)。
 - `custom_http`：可配置请求方法、请求头、查询参数、请求体、图片结果路径、结果类型、错误路径和成功状态码。
 

@@ -11,7 +11,7 @@ from urllib.parse import urlsplit, urlunsplit
 from astrbot.api import logger
 
 from ..core.adapters.base import BaseImageAdapter
-from ..core.shared.logging import safe_log_error_body, safe_log_url, safe_log_text
+from ..core.shared.logging import safe_log_error_body, safe_log_text, safe_log_url
 from ..core.shared.types import GenerationRequest, GenerationResult, ImageCapability
 
 
@@ -117,6 +117,8 @@ class CodexResponsesAdapter(BaseImageAdapter):
         payload: dict[str, Any] = {
             "model": self.model,
             "tools": [self._build_image_generation_tool()],
+            # Short subject-only prompts must still invoke image generation.
+            "tool_choice": {"type": "image_generation"},
         }
         if not request.images:
             payload["input"] = request.prompt
