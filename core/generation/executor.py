@@ -279,10 +279,12 @@ class GenerationExecutor:
             self.task_manager.mark_generation_task_failed(task_id, error)
             if skip_direct_delivery:
                 return
-            await self.context.send_message(
+            sent = await self.context.send_message(
                 unified_msg_origin,
                 MessageChain().message(format_generation_failure_message(error)),
             )
+            if sent:
+                self.task_manager.mark_generation_task_delivered(task_id)
             return
 
         logger.debug(
@@ -306,13 +308,15 @@ class GenerationExecutor:
             )
             if skip_direct_delivery:
                 return
-            await self.context.send_message(
+            sent = await self.context.send_message(
                 unified_msg_origin,
                 MessageChain().message(f"❌ 图片内容审核未通过: {image_reason}"),
             )
+            if sent:
+                self.task_manager.mark_generation_task_delivered(task_id)
             return
 
-        result_message = "图片已生成，等待 AI 处理" if deliver_via_ai else "图片已生成"
+        result_message = "图片已生成"
         if errors:
             result_message = f"{result_message}；部分失败: {'; '.join(errors)}"
 
@@ -361,6 +365,11 @@ class GenerationExecutor:
             result_paths=generated_file_paths,
             message=delivery_message,
         )
+        if sent_batches:
+            self.task_manager.mark_generation_task_delivered(
+                task_id,
+                paths=[] if send_errors else generated_file_paths,
+            )
 
     async def _send_generated_images(
         self,

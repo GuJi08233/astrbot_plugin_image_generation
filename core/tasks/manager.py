@@ -524,6 +524,34 @@ class TaskManager(
         record.message = message
         return True
 
+    def mark_generation_task_delivered(
+        self,
+        task_id: str,
+        *,
+        paths: list[str] | None = None,
+    ) -> GenerationTaskRecord | None:
+        """Record that a finished task result has reached the user.
+
+        Args:
+            task_id: Generation task ID whose result was delivered.
+            paths: Image paths delivered to the user. Defaults to the task result
+                paths so successful tasks keep a delivery trail.
+
+        Returns:
+            The updated record, or ``None`` when the task is unknown.
+        """
+        record = self._generation_tasks.get(task_id)
+        if not record:
+            return None
+        record.delivered = True
+        record.delivered_at = record.delivered_at or datetime.now()
+        delivered_paths = record.result_paths if paths is None else paths
+        for path in delivered_paths:
+            if path not in record.delivered_paths:
+                record.delivered_paths.append(path)
+        self._save_generation_tasks()
+        return record
+
     def mark_generation_task_succeeded(
         self,
         task_id: str,
