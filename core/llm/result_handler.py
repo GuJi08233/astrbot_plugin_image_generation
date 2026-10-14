@@ -7,6 +7,7 @@ import json
 import os
 from collections.abc import Callable, Coroutine
 from contextlib import suppress
+from difflib import SequenceMatcher
 from typing import Any
 
 from astrbot.api import logger
@@ -49,6 +50,19 @@ IMAGE_GENERATION_TASK_WOKE_SYSTEM_PROMPT = (
     "# IMAGE GENERATION TASK CONTEXT\n"
     "The completed task payload is provided in the user message."
 )
+
+
+def _text_similarity(left: str, right: str) -> float:
+    """Return how similar two short messages are.
+
+    Args:
+        left: First message text.
+        right: Second message text.
+
+    Returns:
+        Similarity ratio between 0.0 and 1.0.
+    """
+    return SequenceMatcher(None, left.strip(), right.strip()).ratio()
 
 
 class LLMResultHandler:
@@ -229,20 +243,31 @@ class LLMResultHandler:
         record: GenerationTaskRecord,
         *,
         reason: str,
-    ) -> None:
-        """Directly send task result if the awakened AI cannot handle it."""
+    ) -> str:
+        """Directly send task result if the awakened AI cannot handle it.
+
+        Args:
+            record: Completed generation task record.
+            reason: Why the fallback delivery was needed.
+
+        Returns:
+            Plain text of the sent fallback message, or an empty string when
+            nothing was sent.
+
+        """
         logger.warning(
             f"{log_prefix('Task', record.task_id)} AI 处理生图结果失败，改为直接发送: {safe_log_text(reason, 200)}"
         )
-        sent = await self.context.send_message(
-            record.unified_msg_origin,
-            self._build_fallback_chain(record),
+        chain = self._build_fallback_chain(record)
+        sent = await self.context.send_message(record.unified_msg_origin, chain)
+        if not sent:
+            return ""
+        # 失败兜底只发文字，此时不能把结果图片记成已送达。
+        self.task_manager.mark_generation_task_delivered(
+            record.task_id,
+            paths=[] if record.error else record.result_paths,
         )
-        if sent:
-            self.task_manager.mark_generation_task_delivered(
-                record.task_id,
-                paths=record.result_paths,
-            )
+        return chain.get_plain_text()
 
     def _missing_delivered_images(
         self,
@@ -253,19 +278,27 @@ class LLMResultHandler:
 
         Args:
             record: Completed generation task record.
-            delivered_paths: Image paths the AI tool delivered successfully.
+            delivered_paths: Image paths or URLs the AI tool delivered.
 
         Returns:
             Result image paths that still need to be sent to the user.
 
         """
+        # 模型可能改写路径（相对路径、URL 下载结果），因此同时按归一化路径和
+        # 文件名比对，避免已送达的图片被重复补发。
         normalized = {
             os.path.normcase(os.path.normpath(path)) for path in delivered_paths
+        }
+        delivered_names = {
+            os.path.normcase(os.path.basename(path.rstrip("/\\")))
+            for path in delivered_paths
+            if path
         }
         return [
             path
             for path in record.result_paths
             if os.path.normcase(os.path.normpath(path)) not in normalized
+            and os.path.normcase(os.path.basename(path)) not in delivered_names
         ]
 
     async def _send_missing_images(
@@ -311,6 +344,7 @@ class LLMResultHandler:
         text: str,
         *,
         delivered_texts: list[str],
+        min_similarity: float = 0.6,
     ) -> None:
         """Send the proactive turn's closing note as a follow-up message.
 
@@ -318,11 +352,19 @@ class LLMResultHandler:
             record: Completed generation task record.
             text: The awakened AI's final reply text.
             delivered_texts: Plain texts already delivered by the tool in this run.
+            min_similarity: Above this similarity to an already delivered text the
+                note is treated as a repeat and skipped.
 
         """
         note = text.strip()
-        if not note or note in delivered_texts:
+        if not note:
             return
+        for delivered in delivered_texts:
+            if delivered == note or _text_similarity(delivered, note) >= min_similarity:
+                logger.debug(
+                    f"{log_prefix('Task', record.task_id)} 收尾文案与已发送内容重复，跳过"
+                )
+                return
         try:
             if await self.context.send_message(
                 record.unified_msg_origin,
@@ -540,17 +582,26 @@ class LLMResultHandler:
             if resp.type != "llm_result":
                 continue
             chain = resp.data.get("chain") if isinstance(resp.data, dict) else None
-            text = chain.get_plain_text().strip() if chain else ""
+            if chain is None or chain.type == "reasoning":
+                # 推理链不是面向用户的文案，核心也不会把它发给用户
+                continue
+            text = chain.get_plain_text().strip()
             if text:
                 closing_text = text
 
         llm_resp = runner.get_final_llm_resp()
+        final_text = (llm_resp.completion_text or "").strip() if llm_resp else ""
+        if final_text:
+            closing_text = final_text
+        delivery_covered_note = False
         # 投递是否发生以投递工具自身的记录为准（它只在核心工具真正发送成功后写入）。
         if not delivery_tool.delivered:
-            await self._send_fallback(
+            fallback_text = await self._send_fallback(
                 record,
                 reason="AI 未通过 send_message_to_user 发送结果",
             )
+            # 兜底文案已经说明结果，收尾文案不再重复一遍
+            delivery_covered_note = bool(fallback_text and closing_text)
         else:
             missing_paths = self._missing_delivered_images(
                 record,
@@ -567,11 +618,12 @@ class LLMResultHandler:
             )
 
         # 图片投递完成后再补一句文案，形成「先图片、后文案」的两条消息
-        await self._send_closing_note(
-            record,
-            closing_text,
-            delivered_texts=delivery_tool.delivered_texts,
-        )
+        if not delivery_covered_note:
+            await self._send_closing_note(
+                record,
+                closing_text,
+                delivered_texts=delivery_tool.delivered_texts,
+            )
 
         summary_note = (
             f"[ImageGenerationTask] task_id={record.task_id}, "

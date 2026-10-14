@@ -731,7 +731,7 @@ class DeliverySendMessageToUserTool(SendMessageToUserTool):
     """Proactive-delivery variant of `send_message_to_user`.
 
     Proactive turns must deliver a task result exactly once. This variant records
-    the image paths and plain texts it actually delivered so the caller can
+    the image paths/URLs and plain texts it actually delivered so the caller can
     verify the delivery, resend anything the AI left out and avoid repeating the
     AI wording, and it refuses to deliver content that was already delivered
     within the same run.
@@ -752,10 +752,10 @@ class DeliverySendMessageToUserTool(SendMessageToUserTool):
         if not isinstance(messages, list):
             messages = []
         image_paths = [
-            str(item["path"])
+            str(item["path"] or item["url"])
             for item in messages
             if isinstance(item, dict)
-            and item.get("path")
+            and (item.get("path") or item.get("url"))
             and str(item.get("type", "")).lower() != "plain"
         ]
         plain_texts = [
