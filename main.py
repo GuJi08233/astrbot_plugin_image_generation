@@ -31,6 +31,7 @@ from .core.generation.context_image_cache import RecentContextImageCache
 from .core.generation.executor import GenerationExecutor
 from .core.generation.image_processor import ImageProcessor
 from .core.generation.options import parse_generation_options
+from .core.generation.quoted_text import collect_quoted_text, has_quoted_text_source
 from .core.generation.reference_collector import collect_command_reference_images
 from .core.llm.result_handler import LLMResultHandler
 from .core.llm.tools import (
@@ -578,7 +579,8 @@ class ImageGenerationPlugin(CommandHandlerMixin, Star):
             return
 
         raw_prompt = cmd_parts[1].strip() if len(cmd_parts) > 1 else ""
-        if not raw_prompt:
+        # 引用消息或转发卡片本身也能作为素材，此时允许不写文字直接生图。
+        if not raw_prompt and not has_quoted_text_source(event):
             yield event.plain_result(self.format_image_command_help())
             return
 
@@ -613,19 +615,25 @@ class ImageGenerationPlugin(CommandHandlerMixin, Star):
             matched_personas,
         )
 
-        # 合并转发卡片里的文字并入提示词；只解析一层，卡片里再嵌转发不深入。
-        # 放在用户自己写的要求前面，作为素材。
-        forward_text = await self.image_processor.collect_forward_card_text(event)
-        if forward_text:
-            prompt = f"{forward_text}\n{prompt}".strip() if prompt else forward_text
-
-        if not prompt:
-            yield event.plain_result("❌ 请提供图片生成的提示词或预设名称！")
-            return
-
         if not self.has_required_api_key():
             logger.debug(f"{LOG} 生图指令失败: 未配置 API Key，用户={masked_uid}")
             yield event.plain_result("❌ 未配置 API Key，无法生成图片")
+            return
+
+        # 引用消息与合并转发卡片的文字并入提示词；只解析一层。
+        # 放在用户自己写的要求前面，作为素材。解析会调用平台接口，故放在前置校验之后。
+        has_source = has_quoted_text_source(event)
+        quoted_text = await collect_quoted_text(event) if has_source else ""
+        if quoted_text:
+            prompt = f"{quoted_text}\n{prompt}".strip() if prompt else quoted_text
+
+        if not prompt:
+            if has_source:
+                yield event.plain_result(
+                    "❌ 未能从引用或转发的消息中读取到文字，请补充提示词！"
+                )
+            else:
+                yield event.plain_result("❌ 请提供图片生成的提示词或预设名称！")
             return
 
         check_result = self.usage_manager.check_rate_limit(

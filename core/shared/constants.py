@@ -94,6 +94,9 @@ DEFAULT_MAX_GENERATION_IMAGE_COUNT = 10
 DEFAULT_MAX_IMAGES_PER_MESSAGE = 5
 """Default maximum number of images sent per message."""
 
+MAX_QUOTED_TEXT_CHARS = 1000
+"""Maximum characters taken from quoted messages and merged-forward cards."""
+
 DEFAULT_MAX_IMAGE_SIZE_MB = 10
 """Default maximum reference image size in MB."""
 
