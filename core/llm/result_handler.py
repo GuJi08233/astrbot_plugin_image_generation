@@ -257,6 +257,7 @@ class LLMResultHandler:
 
         Returns:
             Result image paths that still need to be sent to the user.
+
         """
         normalized = {
             os.path.normcase(os.path.normpath(path)) for path in delivered_paths
@@ -280,6 +281,7 @@ class LLMResultHandler:
 
         Returns:
             Image paths that were sent successfully.
+
         """
         max_per_message = max(1, self.config_manager.max_images_per_message)
         sent_paths: list[str] = []
@@ -316,6 +318,7 @@ class LLMResultHandler:
             record: Completed generation task record.
             text: The awakened AI's final reply text.
             delivered_texts: Plain texts already delivered by the tool in this run.
+
         """
         note = text.strip()
         if not note or note in delivered_texts:
@@ -354,6 +357,7 @@ class LLMResultHandler:
             conversation: Conversation bound to the proactive turn.
             note: Assistant note describing the delivered task result.
             token_usage: Optional total token usage of the proactive turn.
+
         """
         if not conversation:
             return
@@ -364,7 +368,7 @@ class LLMResultHandler:
         )
         try:
             history = json.loads(getattr(latest, "history", None) or "[]")
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             history = []
         if not isinstance(history, list):
             history = []

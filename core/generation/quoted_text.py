@@ -24,19 +24,27 @@ _PLACEHOLDER_PATTERN = re.compile(
 )
 _BLANK_RUN_PATTERN = re.compile(r"[ \t]{2,}")
 
-_core_support_warned = False
+
+class _SupportState:
+    """Module-level state shared by the lazy core imports."""
+
+    warned = False
 
 
 def _warn_core_support_unavailable(exc: Exception) -> None:
     """Log missing quoted-message support in AstrBot core once.
 
+    The quoted-message helpers live in a relatively new core module. Plugins may
+    run on an older core, so the imports stay lazy and degrade to a single
+    warning instead of failing every command.
+
     Args:
         exc: Import error raised while loading the core helpers.
+
     """
-    global _core_support_warned
-    if _core_support_warned:
+    if _SupportState.warned:
         return
-    _core_support_warned = True
+    _SupportState.warned = True
     logger.warning(
         f"{LOG} 当前 AstrBot 版本不支持引用消息解析，引用与转发文字将被忽略: {exc}"
     )
@@ -53,6 +61,7 @@ def has_quoted_text_source(event: AstrMessageEvent) -> bool:
 
     Returns:
         Whether the message chain holds a reply, node or forward component.
+
     """
     message = getattr(getattr(event, "message_obj", None), "message", None)
     if not message:
@@ -84,6 +93,7 @@ async def collect_quoted_text(event: AstrMessageEvent) -> str:
 
     Returns:
         Cleaned text material, or an empty string when nothing usable was found.
+
     """
     message = getattr(getattr(event, "message_obj", None), "message", None)
     if not message:
@@ -108,6 +118,7 @@ async def _collect_reply_text(event: AstrMessageEvent) -> list[str]:
 
     Returns:
         Collected quoted text, or an empty list when there is nothing to read.
+
     """
     try:
         from astrbot.core.utils.quoted_message import extract_quoted_message_text
@@ -145,6 +156,7 @@ def _collect_inline_node_text(message: list) -> list[str]:
 
     Returns:
         One text entry per node, prefixed with the sender name when known.
+
     """
     node_cls = getattr(Comp, "Node", None)
     nodes_cls = getattr(Comp, "Nodes", None)
@@ -185,6 +197,7 @@ async def _fetch_forward_card_text(event: AstrMessageEvent) -> str:
 
     Returns:
         Fetched card text, or an empty string when nothing could be read.
+
     """
     forward_cls = getattr(Comp, "Forward", None)
     if forward_cls is None:
@@ -236,6 +249,7 @@ def _finalize_text(parts: list[str]) -> str:
 
     Returns:
         Cleaned text material, possibly truncated, or an empty string.
+
     """
     lines: list[str] = []
     seen: set[str] = set()
@@ -244,8 +258,8 @@ def _finalize_text(parts: list[str]) -> str:
             continue
         text = _PLACEHOLDER_PATTERN.sub(" ", part)
         text = _BLANK_RUN_PATTERN.sub(" ", text)
-        for line in text.splitlines():
-            line = line.strip()
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
             if not line or line in seen:
                 continue
             seen.add(line)

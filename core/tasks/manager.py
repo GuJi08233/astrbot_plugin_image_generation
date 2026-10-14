@@ -539,6 +539,7 @@ class TaskManager(
 
         Returns:
             The updated record, or ``None`` when the task is unknown.
+
         """
         record = self._generation_tasks.get(task_id)
         if not record:
