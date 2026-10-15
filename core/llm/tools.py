@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 from typing import Any
 
 from astrbot.api import logger
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
+from astrbot.core.tools.message_tools import SendMessageToUserTool
 from pydantic import Field
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
@@ -626,8 +629,9 @@ class ImageTaskTool(FunctionTool[AstrAgentContext]):
     name: str = "manage_image_tasks"
     description: str = (
         "管理当前会话的生图任务。list 只列出正在进行的任务；"
-        "detail 可查看仍保留记录的进行中或已结束任务；"
+        "detail 可查看仍保留记录的进行中或已结束任务，并会显示结果是否已发送给用户；"
         "cancel 只能取消仍在排队/运行/取消中的任务。"
+        "已送达的结果不要重复发送给用户。"
     )
     parameters: dict = Field(
         default_factory=lambda: {
@@ -720,6 +724,77 @@ class ImageTaskTool(FunctionTool[AstrAgentContext]):
             return message
 
         return "❌ 不支持的操作，请使用 list、detail 或 cancel"
+
+
+@pydantic_dataclass
+class DeliverySendMessageToUserTool(SendMessageToUserTool):
+    """Proactive-delivery variant of `send_message_to_user`.
+
+    Proactive turns must deliver a task result exactly once. This variant records
+    the image paths/URLs and plain texts it actually delivered so the caller can
+    verify the delivery, resend anything the AI left out and avoid repeating the
+    AI wording, and it refuses to deliver content that was already delivered
+    within the same run.
+    """
+
+    delivered: bool = False
+    delivered_paths: list[str] = Field(default_factory=list)
+    delivered_texts: list[str] = Field(default_factory=list)
+    sent_signatures: list[str] = Field(default_factory=list)
+
+    async def call(
+        self,
+        context: ContextWrapper[AstrAgentContext],
+        **kwargs: Any,
+    ) -> ToolExecResult:
+        """Deliver the message unless the same content was already delivered."""
+        messages = kwargs.get("messages")
+        if not isinstance(messages, list):
+            messages = []
+        image_paths = [
+            str(item["path"] or item["url"])
+            for item in messages
+            if isinstance(item, dict)
+            and (item.get("path") or item.get("url"))
+            and str(item.get("type", "")).lower() != "plain"
+        ]
+        plain_texts = [
+            str(item.get("text") or "").strip()
+            for item in messages
+            if isinstance(item, dict)
+            and str(item.get("type", "")).lower() == "plain"
+            and str(item.get("text") or "").strip()
+        ]
+        delivered = {
+            os.path.normcase(os.path.normpath(path)) for path in self.delivered_paths
+        }
+        repeated = any(
+            os.path.normcase(os.path.normpath(path)) in delivered
+            for path in image_paths
+        )
+        signature = json.dumps(
+            messages, ensure_ascii=False, sort_keys=True, default=str
+        )
+        if repeated or signature in self.sent_signatures:
+            logger.warning(f"{LOG} 已拒绝同一次运行内重复发送的内容")
+            return (
+                "error: this content was already sent to the user in this turn; "
+                "do not send it again."
+            )
+
+        result = await super().call(context, **kwargs)
+        if isinstance(result, str) and result.lstrip().startswith("error"):
+            return result
+
+        self.sent_signatures.append(signature)
+        self.delivered = True
+        for path in image_paths:
+            if path not in self.delivered_paths:
+                self.delivered_paths.append(path)
+        for text in plain_texts:
+            if text not in self.delivered_texts:
+                self.delivered_texts.append(text)
+        return result
 
 
 def adjust_tool_parameters(

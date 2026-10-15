@@ -241,6 +241,12 @@ def format_task_detail(record: GenerationTaskRecord) -> str:
             time_parts.append(f"执行 {duration:.2f}s")
     lines.append("- 时间：" + " ｜ ".join(time_parts))
 
+    if not record.is_active:
+        delivery_label = "已通知用户" if record.delivered else "尚未通知用户"
+        if record.delivered and record.delivered_paths:
+            delivery_label += f"（{len(record.delivered_paths)}张）"
+        lines.append(f"- 送达：{delivery_label}")
+
     if record.message and record.message not in {"任务已提交", "任务运行中"}:
         lines.append(f"- 当前：{safe_log_text(record.message, 80)}")
     if record.error:
