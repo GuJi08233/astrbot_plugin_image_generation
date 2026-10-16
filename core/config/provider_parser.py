@@ -41,7 +41,10 @@ ADAPTER_EXTRA_DEFAULTS: dict[AdapterType, dict[str, Any]] = {
         "output_format": "png",
     },
     AdapterType.AGNES_AI: {"response_format": "base64"},
-    AdapterType.CODEX_RESPONSES: {"endpoint": "/codex/responses"},
+    AdapterType.CODEX_RESPONSES: {
+        "endpoint": "/codex/responses",
+        "enable_streaming": True,
+    },
 }
 LOG = log_prefix("Config")
 

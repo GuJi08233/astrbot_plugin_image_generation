@@ -613,7 +613,7 @@
         },
         "codex_responses": {
           "name": "Codex Responses API",
-          "hint": "Calls Codex or OpenAI Responses image APIs, requesting SSE by default and processing final images. JSON/image responses are also accepted. The path defaults to /codex/responses and can be set to /v1/responses. Verify streaming compatibility with your endpoint.",
+          "hint": "Calls Codex or OpenAI Responses image APIs with optional SSE streaming, enabled by default. Final images are parsed according to the actual response type, including JSON/image responses. The path defaults to /codex/responses and can be set to /v1/responses. Verify compatibility with your endpoint.",
           "base_url": {
             "description": "API endpoint",
             "hint": "Enter the service root, for example https://baobao-ai.com or https://api.example.com. Do not include query parameters. The request URL is this address plus the path below."
@@ -621,6 +621,10 @@
           "endpoint": {
             "description": "API path",
             "hint": "Joined with the service root. Default is /codex/responses. Use /v1/responses for standard OpenAI Responses APIs."
+          },
+          "enable_streaming": {
+            "description": "Use SSE streaming",
+            "hint": "Enabled by default for both text-to-image and image-to-image requests, sending stream: true. Disable it to send stream: false for endpoints without streaming support. Responses are still parsed according to their actual Content-Type; requests are never automatically resubmitted in another mode."
           },
           "proxy": {
             "description": "Proxy URL",

@@ -21,7 +21,14 @@ class CodexResponsesAdapterTest(unittest.IsolatedAsyncioTestCase):
         root = Path(__file__).resolve().parents[1]
         namespace = "_codex_responses_test_plugin"
         modules = {}
-        for suffix in ("", "adapter", "core", "core.adapters", "core.shared"):
+        for suffix in (
+            "",
+            "adapter",
+            "core",
+            "core.adapters",
+            "core.config",
+            "core.shared",
+        ):
             name = f"{namespace}.{suffix}" if suffix else namespace
             module = types.ModuleType(name)
             module.__path__ = [str(root.joinpath(*suffix.split(".")))]
@@ -36,6 +43,11 @@ class CodexResponsesAdapterTest(unittest.IsolatedAsyncioTestCase):
                 f"{namespace}.adapter.codex_responses_adapter"
             )
             shared = importlib.import_module(f"{namespace}.core.shared.types")
+            provider_parser = importlib.import_module(
+                f"{namespace}.core.config.provider_parser"
+            )
+        self.AdapterType = shared.AdapterType
+        self.provider_parser = provider_parser.ConfigProviderParserMixin()
         self.GenerationRequest = shared.GenerationRequest
         self.ImageData = shared.ImageData
         self.adapter = adapter_module.CodexResponsesAdapter(
@@ -127,13 +139,178 @@ class CodexResponsesAdapterTest(unittest.IsolatedAsyncioTestCase):
         payload = self.session.post.call_args.kwargs["json"]
         self.assertEqual(payload["input"], "原神")
         self.assertIs(payload["stream"], True)
-        self.assertIn(
-            "text/event-stream", self.session.post.call_args.kwargs["headers"]["Accept"]
+        self.assertEqual(
+            self.session.post.call_args.kwargs["headers"]["Accept"],
+            "text/event-stream, application/json, image/*",
         )
         self.assertEqual(payload["tool_choice"], {"type": "image_generation"})
         self.assertEqual(
             payload["tools"], [{"type": "image_generation", "output_format": "png"}]
         )
+
+    async def test_disabled_streaming_text_to_image_decodes_json(self):
+        self.adapter.config.extra["enable_streaming"] = False
+
+        images, error = await self.adapter._generate_once(
+            self.GenerationRequest(prompt="原神")
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(images, [base64.b64decode(self.image_base64)])
+        self.session.post.assert_called_once()
+        payload = self.session.post.call_args.kwargs["json"]
+        self.assertIs(payload["stream"], False)
+        self.assertEqual(payload["input"], "原神")
+        self.assertEqual(payload["tool_choice"], {"type": "image_generation"})
+        self.assertEqual(
+            payload["tools"], [{"type": "image_generation", "output_format": "png"}]
+        )
+        self.assertEqual(
+            self.session.post.call_args.kwargs["headers"]["Accept"],
+            "application/json, image/*",
+        )
+        self.response.read.assert_awaited_once()
+        self.response.content.iter_any.assert_not_called()
+
+    async def test_disabled_streaming_reference_images_preserve_input_and_decode_json(
+        self,
+    ):
+        self.adapter.config.extra["enable_streaming"] = False
+        references = [
+            self.ImageData(data=b"first-reference", mime_type="image/jpeg"),
+            self.ImageData(data=b"second-reference", mime_type="image/webp"),
+        ]
+
+        images, error = await self.adapter._generate_once(
+            self.GenerationRequest(prompt="原神", images=references)
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(images, [base64.b64decode(self.image_base64)])
+        self.session.post.assert_called_once()
+        payload = self.session.post.call_args.kwargs["json"]
+        self.assertIs(payload["stream"], False)
+        self.assertEqual(payload["tool_choice"], {"type": "image_generation"})
+        self.assertEqual(
+            payload["input"],
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "原神"},
+                        {
+                            "type": "input_image",
+                            "image_url": "data:image/jpeg;base64,Zmlyc3QtcmVmZXJlbmNl",
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": "data:image/webp;base64,c2Vjb25kLXJlZmVyZW5jZQ==",
+                        },
+                    ],
+                }
+            ],
+        )
+        self.assertEqual(
+            self.session.post.call_args.kwargs["headers"]["Accept"],
+            "application/json, image/*",
+        )
+
+    async def test_streaming_option_is_normalized_to_a_boolean(self):
+        for value, expected in (
+            (True, True),
+            ("true", True),
+            ("enabled", True),
+            (" FALSE ", False),
+            ("0", False),
+            ("no", False),
+            ("off", False),
+            ("", False),
+            (0, False),
+            (1, True),
+        ):
+            with self.subTest(value=value):
+                self.adapter.config.extra["enable_streaming"] = value
+                self.session.post.reset_mock()
+
+                images, error = await self.adapter._generate_once(
+                    self.GenerationRequest(prompt="原神")
+                )
+
+                self.assertIsNone(error)
+                self.assertEqual(images, [base64.b64decode(self.image_base64)])
+                self.session.post.assert_called_once()
+                self.assertIs(
+                    self.session.post.call_args.kwargs["json"]["stream"], expected
+                )
+                self.assertEqual(
+                    self.session.post.call_args.kwargs["headers"]["Accept"],
+                    "text/event-stream, application/json, image/*"
+                    if expected
+                    else "application/json, image/*",
+                )
+
+    async def test_disabled_streaming_still_decodes_sse_by_content_type(self):
+        self.adapter.config.extra["enable_streaming"] = False
+        self._set_sse(
+            {
+                "type": "response.completed",
+                "response": {
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "image_generation_call",
+                            "status": "completed",
+                            "result": self.image_base64,
+                        }
+                    ],
+                },
+            },
+            fail_after_chunks=True,
+        )
+
+        images, error = await self.adapter._generate_once(
+            self.GenerationRequest(prompt="原神")
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(images, [base64.b64decode(self.image_base64)])
+        self.session.post.assert_called_once()
+        self.assertIs(self.session.post.call_args.kwargs["json"]["stream"], False)
+        self.assertEqual(
+            self.session.post.call_args.kwargs["headers"]["Accept"],
+            "application/json, image/*",
+        )
+        self.response.read.assert_not_awaited()
+
+    async def test_disabled_streaming_http_rejection_does_not_switch_modes(self):
+        self.adapter.config.extra["enable_streaming"] = False
+        self.response.status = 400
+        self.response.read.return_value = json.dumps(
+            {"error": {"message": "stream must be true"}}
+        ).encode()
+
+        images, error = await self.adapter._generate_once(
+            self.GenerationRequest(prompt="原神")
+        )
+
+        self.assertIsNone(images)
+        self.assertIn("400", error)
+        self.session.post.assert_called_once()
+        self.assertIs(self.session.post.call_args.kwargs["json"]["stream"], False)
+
+    def test_provider_parser_defaults_streaming_and_preserves_explicit_values(self):
+        for provider_item, expected in (
+            ({}, True),
+            ({"enable_streaming": False}, False),
+            ({"enable_streaming": True}, True),
+        ):
+            with self.subTest(provider_item=provider_item):
+                extra = self.provider_parser._parse_provider_extra(
+                    self.AdapterType.CODEX_RESPONSES, provider_item
+                )
+
+                self.assertIs(extra["enable_streaming"], expected)
+                self.assertEqual(extra["endpoint"], "/codex/responses")
 
     async def test_reference_images_preserve_order_and_mime_with_forced_image_tool(
         self,

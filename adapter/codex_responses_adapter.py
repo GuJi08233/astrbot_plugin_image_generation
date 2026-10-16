@@ -18,7 +18,7 @@ from ..core.shared.types import GenerationRequest, GenerationResult, ImageCapabi
 
 
 class CodexResponsesAdapter(BaseImageAdapter):
-    """Adapter for streaming Codex Responses image generation endpoints."""
+    """Adapter for Codex Responses image generation with optional streaming."""
 
     def get_capabilities(self) -> ImageCapability:
         """Return adapter capabilities from provider configuration options."""
@@ -36,7 +36,7 @@ class CodexResponsesAdapter(BaseImageAdapter):
     async def _generate_once(
         self, request: GenerationRequest
     ) -> tuple[list[bytes] | None, str | None]:
-        """Send one streaming image-generation request to Codex Responses.
+        """Send one image-generation request using the configured streaming mode.
 
         Args:
             request: Prompt and optional reference images to generate from.
@@ -53,7 +53,11 @@ class CodexResponsesAdapter(BaseImageAdapter):
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "Accept": "text/event-stream, application/json, image/*",
+            "Accept": (
+                "text/event-stream, application/json, image/*"
+                if payload["stream"]
+                else "application/json, image/*"
+            ),
         }
         start_time = time.time()
         self._log_request_overview(
@@ -250,10 +254,26 @@ class CodexResponsesAdapter(BaseImageAdapter):
         return response_data, None
 
     def _build_payload(self, request: GenerationRequest) -> dict[str, Any]:
-        """Build a text-only or multimodal Responses request payload."""
+        """Build a text-only or multimodal request with the selected streaming mode.
+
+        Args:
+            request: Prompt and optional reference images to send to the model.
+
+        Returns:
+            A Responses request payload with an explicit boolean stream field.
+        """
+        enable_streaming = self.config.extra.get("enable_streaming", True)
+        if isinstance(enable_streaming, str):
+            enable_streaming = enable_streaming.strip().lower() not in {
+                "false",
+                "0",
+                "no",
+                "off",
+                "",
+            }
         payload: dict[str, Any] = {
             "model": self.model,
-            "stream": True,
+            "stream": bool(enable_streaming),
             "tools": [self._build_image_generation_tool()],
             # Short subject-only prompts must still invoke image generation.
             "tool_choice": {"type": "image_generation"},

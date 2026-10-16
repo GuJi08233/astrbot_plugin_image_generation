@@ -1036,7 +1036,7 @@
       },
       "codex_responses": {
         "name": "Codex Responses 接口",
-        "hint": "调用 Codex / OpenAI Responses 图像接口，默认请求 SSE 并处理最终图片，兼容 JSON/图片响应；接口路径默认为 /codex/responses，也可填写 /v1/responses。远端流式兼容性需实测。",
+        "hint": "调用 Codex / OpenAI Responses 图像接口，默认请求 SSE，可关闭流式请求；按实际响应类型处理最终图片，兼容 JSON/图片响应。接口路径默认为 /codex/responses，也可填写 /v1/responses。远端兼容性需实测。",
         "display_item": "name",
         "hide_hint_in_list": true,
         "items": {
@@ -1057,6 +1057,12 @@
             "hint": "相对接口地址拼接。默认 /codex/responses；标准 OpenAI Responses 可填 /v1/responses。",
             "type": "string",
             "default": "/codex/responses"
+          },
+          "enable_streaming": {
+            "description": "使用 SSE 流式请求",
+            "hint": "文生图和图生图默认开启 SSE，发送 stream: true；不支持流式的兼容站点可关闭，改为发送 stream: false。响应仍按实际 Content-Type 解析，不会自动切换模式重发请求。",
+            "type": "bool",
+            "default": true
           },
           "proxy": {
             "description": "代理地址",

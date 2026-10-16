@@ -1,10 +1,10 @@
 # Codex Responses 接口配置
 
-`codex_responses` 适配器用于接入采用 OpenAI Responses 风格的图片生成接口。它是专用模板：插件固定构造流式请求，通过 `tool_choice` 指定调用生图工具、发送 Bearer API Key，并识别 `image_generation_call` 中的最终图片结果，不需要手动配置请求体或图片路径。
+`codex_responses` 适配器用于接入采用 OpenAI Responses 风格的图片生成接口。它是专用模板：插件按“使用 SSE 流式请求”开关构造请求，通过 `tool_choice` 指定调用生图工具、发送 Bearer API Key，并识别 `image_generation_call` 中的最终图片结果，不需要手动配置请求体或图片路径。
 
 当前版本支持：
 
-- `POST` 请求，默认发送 `stream: true`；接口路径默认为 `/codex/responses`，可改为 `/v1/responses` 等
+- `POST` 请求，默认发送 `stream: true`，可关闭流式开关以显式发送 `stream: false`；接口路径默认为 `/codex/responses`，可改为 `/v1/responses` 等
 - `Authorization: Bearer <API Key>` 认证
 - 根据响应 `Content-Type` 增量解析 SSE，兼容普通 JSON 和直接图片响应
 - 文生图和参考图驱动的图像编辑
@@ -26,9 +26,10 @@
 2. 填写供应商名称，例如 `宝宝AI`。
 3. 在“接口地址”填写服务根地址，例如 `https://baobao-ai.com`。
 4. 在“接口路径”填写实际路径；默认 `/codex/responses`。标准 OpenAI Responses 填 `/v1/responses`。
-5. 在“API 密钥”填写宝宝 AI API Key。
-6. 在“可用模型列表”填写服务实际支持的模型，例如 `gpt-5.6-terra`。
-7. 在“生图模型”中选择 `宝宝AI/gpt-5.6-terra`。
+5. 在“接口路径”下方设置“使用 SSE 流式请求”（`enable_streaming`）；默认开启。不支持流式的服务可关闭，文生图和图生图共用该开关。现有配置未填写此字段时仍默认开启。
+6. 在“API 密钥”填写宝宝 AI API Key。
+7. 在“可用模型列表”填写服务实际支持的模型，例如 `gpt-5.6-terra`。
+8. 在“生图模型”中选择 `宝宝AI/gpt-5.6-terra`。
 
 实际请求地址由接口地址和接口路径直接拼接，不再猜测或改写路径：
 
@@ -44,7 +45,7 @@
 
 每张图片都会发起一个独立请求；插件现有的多图任务会按请求级并发配置调度这些请求。
 
-请求头：
+开启“使用 SSE 流式请求”时的请求头：
 
 ```http
 Authorization: Bearer <API Key>
@@ -52,7 +53,9 @@ Content-Type: application/json
 Accept: text/event-stream, application/json, image/*
 ```
 
-请求体固定为：
+关闭时，`Accept` 改为 `application/json, image/*`。两种模式均保留相同的认证和 `Content-Type` 请求头。
+
+默认开启流式时的请求体：
 
 ```json
 {
@@ -69,13 +72,15 @@ Accept: text/event-stream, application/json, image/*
 }
 ```
 
-其中 `input` 使用插件经过预设、人设和附加提示词合并后的最终文本。文本生图不会额外添加 `messages`、`prompt`、`n`、`modalities`、`size`、参考图或尺寸字段。工具声明会固定带 `output_format: "png"`。文生图和图生图均发送 `stream: true`；服务若仍返回 JSON 或图片，插件会按实际响应类型解析，不会重新提交非流式请求来降级。
+其中 `input` 使用插件经过预设、人设和附加提示词合并后的最终文本。文本生图不会额外添加 `messages`、`prompt`、`n`、`modalities`、`size`、参考图或尺寸字段。工具声明会固定带 `output_format: "png"`。
+
+文生图和图生图均由 `enable_streaming` 控制：开启时发送 `stream: true` 和 `Accept: text/event-stream, application/json, image/*`；关闭时显式发送 `stream: false` 和 `Accept: application/json, image/*`。响应始终按实际 `Content-Type` 解析，因此开启后返回 JSON/图片、关闭后仍返回 SSE 都可处理。插件不会因模式不兼容或请求失败而自动切换到另一种模式重发；现有重试仍使用所选模式。
 
 文生图和图生图均发送 `tool_choice: {"type":"image_generation"}`，明确要求模型调用生图工具。这样 `/生图 原神` 等仅含主题的提示词也会按生图任务处理，无需用户额外添加“画一个”。提示词正文保持原样。接入服务需要支持这一 Responses 字段；第三方中转是否接受该字段仍需在实际服务上验证。
 
 ## 图像编辑请求
 
-当用户发送、引用或通过 LLM 工具/公共 API 提供参考图时，插件会复用既有的参考图收集、大小校验、文件类型校验、去重和转换链路，并把每张 `ImageData` 按原顺序编码为 `data:<mime>;base64,...`。此时请求使用 Responses 多模态 `input`：
+当用户发送、引用或通过 LLM 工具/公共 API 提供参考图时，插件会复用既有的参考图收集、大小校验、文件类型校验、去重和转换链路，并把每张 `ImageData` 按原顺序编码为 `data:<mime>;base64,...`。此时请求使用 Responses 多模态 `input`；以下示例使用默认开启的流式模式，关闭开关时 `stream` 为 `false`：
 
 ```json
 {
@@ -124,7 +129,7 @@ response.output[i].result
 
 ## 响应格式
 
-当响应 `Content-Type` 为 `text/event-stream` 时，插件会增量读取 SSE 事件，解析 `response.completed` 中的最终响应，也支持从 `response.output_item.done` 的 `image_generation_call` 读取最终图片结果。例如：
+无论流式开关是否开启，当响应 `Content-Type` 为 `text/event-stream` 时，插件都会增量读取 SSE 事件，解析 `response.completed` 中的最终响应，也支持从 `response.output_item.done` 的 `image_generation_call` 读取最终图片结果。例如：
 
 ```text
 event: response.output_item.done
@@ -205,7 +210,7 @@ data: {"type":"response.completed","response":{"status":"completed","output":[{"
 1. 在 Codex provider 中暂时清空“代理地址”后复测；如果问题消失，调整该代理的 HTTP read/idle timeout。
 2. 在宝宝 AI、反向代理、CDN/WAF 或负载均衡侧，将上游/下游的 read、response 或 idle timeout 设为高于插件请求超时（300 秒应留出缓冲）。
 3. 从运行 AstrBot 的同一台机器直接向服务发送同样请求，比较是否仍在约 150 秒断开，以区分插件外的网络链路。
-4. 当前适配器默认请求 SSE；确认服务端实际返回 `Content-Type: text/event-stream`，并确认中间代理没有缓冲事件。只有服务端持续发送且代理及时转发数据时，流式响应才可能改善空闲断连；它不会绕过总超时，也不保证解决所有断连。仅提供异步任务 ID 的服务仍需其他适配器。
+4. 当前适配器默认请求 SSE；开启“使用 SSE 流式请求”时，确认服务端实际返回 `Content-Type: text/event-stream`，并确认中间代理没有缓冲事件。不支持流式的服务可关闭该开关再测试。只有服务端持续发送且代理及时转发数据时，流式响应才可能改善空闲断连；它不会绕过总超时，也不保证解决所有断连。仅提供异步任务 ID 的服务仍需其他适配器。
 
 不要盲目增加客户端 timeout 或无限重试：远端可能已在第一次连接断开前完成生成，重复提交会带来重复生成或重复计费风险。
 
@@ -240,4 +245,4 @@ SSE 也可通过 `response.output_item.done.item` 返回带 `result` 的最终 `
 
 ### 接口拒绝流式请求或只返回异步任务
 
-当前 provider 固定发送 `stream: true`，不提供流式开关，也不会在请求失败后自动重发 `stream: false`，以免重复生成或计费。服务可以在同一次请求中返回 SSE 最终结果、普通 JSON 或图片；若服务拒绝流式参数，需要服务端支持该请求或改用可自定义请求体的适配器。只返回任务 ID、需要后续轮询的协议仍不支持。
+在“图像模型供应商”对应的“Codex Responses 接口”配置中关闭“使用 SSE 流式请求”（`enable_streaming`），即可让文生图和图生图均显式发送 `stream: false`，并使用 `Accept: application/json, image/*`。服务可以在同一次请求中返回 SSE 最终结果、普通 JSON 或图片，插件始终按实际响应类型解析。不会在请求失败后自动切换到另一种模式重发，以免重复生成或计费；现有重试仍使用所选模式。只返回任务 ID、需要后续轮询的协议仍不支持。
