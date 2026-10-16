@@ -306,6 +306,7 @@
           }
         },
         "codex_responses": {
+          "hint": "调用 Codex / OpenAI Responses 图像接口，默认请求 SSE 并处理最终图片，兼容 JSON/图片响应；接口路径默认为 /codex/responses，也可填写 /v1/responses。远端流式兼容性需实测。",
           "capability_options": {
             "labels": ["文生图", "图生图"]
           },

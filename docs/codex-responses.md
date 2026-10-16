@@ -1,12 +1,12 @@
 # Codex Responses 接口配置
 
-`codex_responses` 适配器用于接入采用 OpenAI Responses 风格的同步图片生成接口。它是专用模板：插件固定构造请求，通过 `tool_choice` 指定调用生图工具、发送 Bearer API Key，并识别 `image_generation_call` 中的图片结果，不需要手动配置请求体或图片路径。
+`codex_responses` 适配器用于接入采用 OpenAI Responses 风格的图片生成接口。它是专用模板：插件固定构造流式请求，通过 `tool_choice` 指定调用生图工具、发送 Bearer API Key，并识别 `image_generation_call` 中的最终图片结果，不需要手动配置请求体或图片路径。
 
 当前版本支持：
 
-- `POST` 同步请求，接口路径默认为 `/codex/responses`，可改为 `/v1/responses` 等
+- `POST` 请求，默认发送 `stream: true`；接口路径默认为 `/codex/responses`，可改为 `/v1/responses` 等
 - `Authorization: Bearer <API Key>` 认证
-- 同步 JSON 响应
+- 根据响应 `Content-Type` 增量解析 SSE，兼容普通 JSON 和直接图片响应
 - 文生图和参考图驱动的图像编辑
 - 标准 `output[*].type == "image_generation_call"` 的 `result` 图片字段
 - 纯 Base64、`data:image/...;base64,...` 和 HTTP(S) 图片 URL
@@ -16,7 +16,7 @@
 暂不支持：
 
 - 宽高比与分辨率参数
-- 流式 SSE 响应
+- 将流式中间预览逐步发送到聊天
 - 返回任务 ID 后需要轮询的异步接口
 - 下载图片 URL 时额外转发 API Key 或自定义下载请求头
 
@@ -49,6 +49,7 @@
 ```http
 Authorization: Bearer <API Key>
 Content-Type: application/json
+Accept: text/event-stream, application/json, image/*
 ```
 
 请求体固定为：
@@ -56,6 +57,7 @@ Content-Type: application/json
 ```json
 {
   "model": "gpt-5.6-terra",
+  "stream": true,
   "input": "生成一张图片：白色背景中央有一个小的纯蓝色实心圆，不要文字。",
   "tool_choice": {"type": "image_generation"},
   "tools": [
@@ -67,7 +69,7 @@ Content-Type: application/json
 }
 ```
 
-其中 `input` 使用插件经过预设、人设和附加提示词合并后的最终文本。文本生图不会额外添加 `messages`、`prompt`、`n`、`stream`、`modalities`、`size`、参考图或尺寸字段。工具声明会固定带 `output_format: "png"`，以匹配已验证的宝宝 AI 请求。
+其中 `input` 使用插件经过预设、人设和附加提示词合并后的最终文本。文本生图不会额外添加 `messages`、`prompt`、`n`、`modalities`、`size`、参考图或尺寸字段。工具声明会固定带 `output_format: "png"`。文生图和图生图均发送 `stream: true`；服务若仍返回 JSON 或图片，插件会按实际响应类型解析，不会重新提交非流式请求来降级。
 
 文生图和图生图均发送 `tool_choice: {"type":"image_generation"}`，明确要求模型调用生图工具。这样 `/生图 原神` 等仅含主题的提示词也会按生图任务处理，无需用户额外添加“画一个”。提示词正文保持原样。接入服务需要支持这一 Responses 字段；第三方中转是否接受该字段仍需在实际服务上验证。
 
@@ -78,6 +80,7 @@ Content-Type: application/json
 ```json
 {
   "model": "gpt-5.6-terra",
+  "stream": true,
   "tool_choice": {"type": "image_generation"},
   "input": [
     {
@@ -103,7 +106,7 @@ Content-Type: application/json
 }
 ```
 
-多模态 `input` 格式与宝宝 AI 的 `gpt-5.6-terra` 编辑请求和同步成功响应已经核验一致；新增的 `tool_choice` 尚未在该服务上实测。输出仍从：
+多模态 `input` 格式与宝宝 AI 的 `gpt-5.6-terra` 编辑请求和同步成功响应已经核验一致；`tool_choice` 和流式请求尚未在该服务上实测。最终响应中的输出仍从：
 
 ```text
 response.output[i].type == image_generation_call
@@ -121,7 +124,20 @@ response.output[i].result
 
 ## 响应格式
 
-首选解析的标准 Responses 响应形态：
+当响应 `Content-Type` 为 `text/event-stream` 时，插件会增量读取 SSE 事件，解析 `response.completed` 中的最终响应，也支持从 `response.output_item.done` 的 `image_generation_call` 读取最终图片结果。例如：
+
+```text
+event: response.output_item.done
+data: {"type":"response.output_item.done","item":{"type":"image_generation_call","status":"completed","result":"<Base64 编码的 PNG 图像数据>"}}
+
+event: response.completed
+data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"image_generation_call","status":"completed","result":"<Base64 编码的 PNG 图像数据>"}]}}
+
+```
+
+`response.image_generation_call.partial_image` 等中间预览不会作为最终结果或发送到聊天。最终图片仍统一经过原有的审核、保存和发送流程。
+
+普通 JSON 响应保持兼容，标准 Responses 响应形态如下：
 
 ```json
 {
@@ -163,7 +179,7 @@ response.output[i].result
 
 为兼容常见中转实现，插件也会尝试 `result_b64`、`b64_json`、`base64`、`url`、顶层等价字段以及 `data[*]` 下的图片字段。
 
-如果接口只返回任务 ID、`202 Accepted`、SSE 事件流，或者图片 URL 下载需要另一种认证方式，则此专用适配器不会完成图片生成；这类协议需要独立的异步/流式适配器。
+如果接口只返回任务 ID、`202 Accepted`，或者图片 URL 下载需要另一种认证方式，则此专用适配器不会完成图片生成；异步任务需要独立的轮询适配器。流式请求、事件格式及工具选择字段是否被第三方中转接受，仍需在实际服务上验证。
 
 ## 能力边界
 
@@ -180,7 +196,7 @@ response.output[i].result
 
 ### 出现 `Server disconnected`，但任务最终成功
 
-这不是本插件把请求超时缩短到约 150 秒。Codex provider 的“超时时间覆盖”会传给 `aiohttp.ClientTimeout(total=...)`；例如配置为 `300` 时，客户端总请求超时仍是 300 秒。`Server disconnected` 表示在收到 HTTP 响应前，服务端、显式代理、透明代理、负载均衡、CDN 或其他网络设备主动关闭了底层连接。
+这不是本插件把请求超时缩短到约 150 秒。Codex provider 的“超时时间覆盖”会传给 `aiohttp.ClientTimeout(total=...)`；例如配置为 `300` 时，客户端总请求超时仍是 300 秒，流式事件不会重置总超时。`Server disconnected` 表示服务端、显式代理、透明代理、负载均衡、CDN 或其他网络设备主动关闭了底层连接。
 
 插件会将这种无 HTTP 状态码的连接错误视为可重试错误。因此日志可能先显示一次连接异常，随后由重试请求成功，任务最终仍正确保存并发送图片。新版日志会在“适配器请求”与“请求异常”中标出配置的超时秒数，便于确认实际生效值。
 
@@ -189,7 +205,7 @@ response.output[i].result
 1. 在 Codex provider 中暂时清空“代理地址”后复测；如果问题消失，调整该代理的 HTTP read/idle timeout。
 2. 在宝宝 AI、反向代理、CDN/WAF 或负载均衡侧，将上游/下游的 read、response 或 idle timeout 设为高于插件请求超时（300 秒应留出缓冲）。
 3. 从运行 AstrBot 的同一台机器直接向服务发送同样请求，比较是否仍在约 150 秒断开，以区分插件外的网络链路。
-4. 若服务无法维持同步长连接，应改用服务端提供的异步轮询或流式协议；当前专用适配器只支持同步最终响应。
+4. 当前适配器默认请求 SSE；确认服务端实际返回 `Content-Type: text/event-stream`，并确认中间代理没有缓冲事件。只有服务端持续发送且代理及时转发数据时，流式响应才可能改善空闲断连；它不会绕过总超时，也不保证解决所有断连。仅提供异步任务 ID 的服务仍需其他适配器。
 
 不要盲目增加客户端 timeout 或无限重试：远端可能已在第一次连接断开前完成生成，重复提交会带来重复生成或重复计费风险。
 
@@ -207,12 +223,14 @@ response.output[i].result
 
 ### 返回“响应中未找到图片数据”
 
-确认服务端在同一次响应的 `output[*]` 中返回：
+确认服务端在同一次 JSON 响应或 SSE 的 `response.completed.response` 中返回：
 
 ```text
 output[*].type == image_generation_call
 output[*].result
 ```
+
+SSE 也可通过 `response.output_item.done.item` 返回带 `result` 的最终 `image_generation_call`。只有 `partial_image`、文本增量或任务 ID 不算最终图片结果；同时检查响应头是否正确标为 `text/event-stream`。
 
 若服务端字段不同，可先保留一段脱敏响应并据此扩展专用适配器；也可以改用 `custom_http` 手工配置请求体和图片提取路径。
 
@@ -220,6 +238,6 @@ output[*].result
 
 优先让服务端返回 `result` 的 Base64 或 data URL。当前适配器为避免把 API Key 发送到未知图片域名，不会在下载图片 URL 时携带生成接口的 Authorization 头。
 
-### 接口返回异步任务或持续事件流
+### 接口拒绝流式请求或只返回异步任务
 
-当前 provider 仅处理同步完成响应。异步轮询和 SSE 需要独立支持任务状态、取消、超时与重试，不能用本模板直接接入。
+当前 provider 固定发送 `stream: true`，不提供流式开关，也不会在请求失败后自动重发 `stream: false`，以免重复生成或计费。服务可以在同一次请求中返回 SSE 最终结果、普通 JSON 或图片；若服务拒绝流式参数，需要服务端支持该请求或改用可自定义请求体的适配器。只返回任务 ID、需要后续轮询的协议仍不支持。

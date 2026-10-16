@@ -613,7 +613,7 @@
         },
         "codex_responses": {
           "name": "Codex Responses API",
-          "hint": "Calls Codex or OpenAI Responses image APIs. The path defaults to /codex/responses and can be set to /v1/responses.",
+          "hint": "Calls Codex or OpenAI Responses image APIs, requesting SSE by default and processing final images. JSON/image responses are also accepted. The path defaults to /codex/responses and can be set to /v1/responses. Verify streaming compatibility with your endpoint.",
           "base_url": {
             "description": "API endpoint",
             "hint": "Enter the service root, for example https://baobao-ai.com or https://api.example.com. Do not include query parameters. The request URL is this address plus the path below."

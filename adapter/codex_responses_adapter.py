@@ -8,6 +8,8 @@ import time
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+import aiohttp
+
 from astrbot.api import logger
 
 from ..core.adapters.base import BaseImageAdapter
@@ -16,7 +18,7 @@ from ..core.shared.types import GenerationRequest, GenerationResult, ImageCapabi
 
 
 class CodexResponsesAdapter(BaseImageAdapter):
-    """Adapter for synchronous Codex Responses image generation endpoints."""
+    """Adapter for streaming Codex Responses image generation endpoints."""
 
     def get_capabilities(self) -> ImageCapability:
         """Return adapter capabilities from provider configuration options."""
@@ -34,7 +36,14 @@ class CodexResponsesAdapter(BaseImageAdapter):
     async def _generate_once(
         self, request: GenerationRequest
     ) -> tuple[list[bytes] | None, str | None]:
-        """Send one synchronous image-generation request to Codex Responses."""
+        """Send one streaming image-generation request to Codex Responses.
+
+        Args:
+            request: Prompt and optional reference images to generate from.
+
+        Returns:
+            Generated image bytes, or an error when generation fails.
+        """
         url, url_error = self._build_responses_url()
         if url_error:
             return None, url_error
@@ -44,7 +53,7 @@ class CodexResponsesAdapter(BaseImageAdapter):
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "Accept": "application/json, image/*",
+            "Accept": "text/event-stream, application/json, image/*",
         }
         start_time = time.time()
         self._log_request_overview(
@@ -67,9 +76,9 @@ class CodexResponsesAdapter(BaseImageAdapter):
                 proxy=self.proxy,
             ) as response:
                 duration = time.time() - start_time
-                body = await response.read()
                 self._log_response_status(request, response.status, duration)
                 if not 200 <= response.status < 300:
+                    body = await response.read()
                     error_text = body.decode("utf-8", errors="replace")
                     self._log_debug_json_text("响应", error_text, request.task_id)
                     self._log_api_error(
@@ -83,11 +92,16 @@ class CodexResponsesAdapter(BaseImageAdapter):
 
                 content_type = response.headers.get("Content-Type", "").lower()
                 if content_type.startswith("image/"):
-                    return [body], None
+                    return [await response.read()], None
 
-                response_data, parse_error = self._parse_response_json(
-                    body, request.task_id
-                )
+                if "text/event-stream" in content_type:
+                    response_data, parse_error = await self._read_stream_response(
+                        response, request.task_id
+                    )
+                else:
+                    response_data, parse_error = self._parse_response_json(
+                        await response.read(), request.task_id
+                    )
                 if parse_error:
                     return None, parse_error
                 if not isinstance(response_data, dict):
@@ -112,10 +126,134 @@ class CodexResponsesAdapter(BaseImageAdapter):
             )
             return None, safe_log_error_body(exc)
 
+    async def _read_stream_response(
+        self, response: aiohttp.ClientResponse, task_id: str | None
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """Collect final image outputs from incrementally framed SSE events.
+
+        Args:
+            response: HTTP response containing a Responses event stream.
+            task_id: Optional task identifier used for sanitized debug logging.
+
+        Returns:
+            A completed response object, or an error for a failed stream.
+        """
+        buffer = b""
+        data_lines: list[bytes] = []
+        event_name = ""
+        output_items: dict[str | int, dict[str, Any]] = {}
+        response_data: dict[str, Any] | None = None
+        stream_error: str | None = None
+
+        def collect_event() -> bool:
+            """Interpret a complete event without treating preview images as results.
+
+            Returns:
+                Whether the stream reached a terminal event or an error.
+            """
+            nonlocal response_data, stream_error
+            payload = b"\n".join(data_lines).strip()
+            if not payload:
+                return False
+            if payload == b"[DONE]":
+                return True
+            try:
+                event = json.loads(payload)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                stream_error = "Codex Responses SSE 事件 JSON 解析失败"
+                return True
+            if not isinstance(event, dict):
+                stream_error = "Codex Responses SSE 事件必须是 JSON 对象"
+                return True
+
+            event_type = event.get("type") or event_name
+            if event_type in {"error", "upstream_error"} or event.get("error"):
+                stream_error = self._format_response_error(
+                    "Codex Responses 返回错误",
+                    event.get("error") or event.get("message") or event,
+                )
+                return True
+            if event_type in {
+                "response.completed",
+                "response.failed",
+                "response.incomplete",
+            }:
+                result = event.get("response")
+                if not isinstance(result, dict):
+                    stream_error = "Codex Responses SSE 终止事件缺少 response 对象"
+                elif event_type != "response.completed":
+                    stream_error = self._response_error_message(result) or (
+                        self._format_response_error(
+                            "Codex Responses 流式请求未完成",
+                            result.get("incomplete_details") or event_type,
+                        )
+                    )
+                else:
+                    response_data = dict(result)
+                return True
+            if event_type == "response.output_item.done":
+                item = event.get("item")
+                if (
+                    isinstance(item, dict)
+                    and item.get("type") == "image_generation_call"
+                ):
+                    item_key = item.get("id")
+                    if item_key is None:
+                        item_key = event.get("output_index", len(output_items))
+                    output_items[item_key] = item
+            return False
+
+        # Frame bytes before decoding: UTF-8 and large Base64 lines may span chunks.
+        completed = False
+        skip_lf = False
+        async for chunk in response.content.iter_any():
+            if not chunk:
+                continue
+            # A CR ends a line immediately; consume its optional LF across chunks.
+            if skip_lf:
+                chunk = chunk.removeprefix(b"\n")
+            lines = re.split(rb"\r\n|[\r\n]", buffer + chunk)
+            buffer = lines.pop()
+            skip_lf = chunk.endswith(b"\r")
+            for line in lines:
+                if line.startswith(b"event:"):
+                    event_name = line[6:].strip().decode("utf-8", errors="replace")
+                elif line.startswith(b"data:"):
+                    data_lines.append(line[5:].removeprefix(b" "))
+                elif not line:
+                    completed = collect_event()
+                    data_lines.clear()
+                    event_name = ""
+                    if completed:
+                        break
+            if completed:
+                break
+
+        if not completed:
+            if buffer.startswith(b"data:"):
+                data_lines.append(buffer[5:].removeprefix(b" "))
+            collect_event()
+        if stream_error:
+            return None, stream_error
+        if response_data is None:
+            if not output_items:
+                return None, "Codex Responses 流式响应未返回完整图片结果"
+            response_data = {"status": "completed"}
+
+        output = response_data.get("output")
+        if not isinstance(output, list) or not any(
+            isinstance(item, dict) and item.get("type") == "image_generation_call"
+            for item in output
+        ):
+            response_data["output"] = list(output_items.values())
+        self._log_debug_json("SSE response", response_data, task_id)
+        return response_data, None
+
     def _build_payload(self, request: GenerationRequest) -> dict[str, Any]:
         """Build a text-only or multimodal Responses request payload."""
         payload: dict[str, Any] = {
             "model": self.model,
+            "stream": True,
             "tools": [self._build_image_generation_tool()],
             # Short subject-only prompts must still invoke image generation.
             "tool_choice": {"type": "image_generation"},
@@ -205,11 +343,12 @@ class CodexResponsesAdapter(BaseImageAdapter):
             return self._format_response_error("Codex Responses 返回错误", error)
 
         status = str(response_data.get("status") or "").strip().lower()
-        if status in {"failed", "error", "cancelled", "canceled"}:
+        if status in {"failed", "error", "cancelled", "canceled", "incomplete"}:
             detail = (
                 response_data.get("message")
                 or response_data.get("reason")
                 or response_data.get("code")
+                or response_data.get("incomplete_details")
                 or status
             )
             return self._format_response_error("Codex Responses 请求失败", detail)
@@ -405,5 +544,5 @@ class CodexResponsesAdapter(BaseImageAdapter):
         ):
             return "image_generation_call 中未找到可解码的图片结果"
         if response_data.get("status") in {"in_progress", "queued"}:
-            return "Codex Responses 返回未完成任务，当前适配器仅支持同步图片响应"
+            return "Codex Responses 返回未完成任务，当前适配器不支持异步轮询"
         return "Codex Responses 响应中未找到图片数据"
