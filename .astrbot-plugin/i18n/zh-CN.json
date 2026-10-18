@@ -341,6 +341,16 @@
               "URL"
             ]
           }
+        },
+        "comfyui": {
+          "capability_options": {
+            "labels": [
+              "文生图",
+              "图生图",
+              "宽高比",
+              "分辨率"
+            ]
+          }
         }
       }
     },

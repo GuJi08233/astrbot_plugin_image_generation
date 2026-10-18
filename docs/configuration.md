@@ -34,6 +34,7 @@
 - `codex_responses`：固定发送 `model`、`input` 与 `tools: [{"type":"image_generation","output_format":"png"}]`；填写服务根地址和接口路径（默认 `/codex/responses`，标准 Responses 可填 `/v1/responses`）。无参考图时发送文本 `input`，有参考图时发送多模态 Responses `input`，仅支持同步结果；详见 [Codex Responses 接口配置](codex-responses.md)。
 - `modelscope`：调用 API-Inference 异步图像接口，使用 ModelScope Access Token 提交、轮询并下载结果；可配置轮询间隔、总等待时间、反向提示词和尺寸映射。默认模板仅启用文生图；需要模型明确支持后才启用图生图。收到 `task_id` 后不会通过外层重试重新提交任务；详见 [ModelScope 接口配置](modelscope.md)。
 - `custom_http`：可配置请求方法、请求头、查询参数、请求体、图片结果路径、结果类型、错误路径和成功状态码；详见 [自定义 HTTP 接口配置](custom-http.md)。
+- `comfyui`：上传 ComfyUI API 格式工作流文件并轮询结果；支持提示词自动写入、参考图上传、宽高比/分辨率节点映射和尺寸映射。可用模型列表仅用于显示，实际模型由工作流加载节点决定；详见 [ComfyUI 工作流配置](comfyui.md)。
 
 ## 生成与结果配置
 

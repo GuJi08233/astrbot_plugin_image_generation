@@ -10,6 +10,9 @@ from __future__ import annotations
 LOG_PREFIX = "[ImageGen]"
 """Common log prefix."""
 
+PLUGIN_NAME = "astrbot_plugin_image_generation"
+"""Plugin name used for data paths and Web APIs."""
+
 
 # Safety settings.
 

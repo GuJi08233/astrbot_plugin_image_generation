@@ -1,5 +1,8 @@
 ### 更新日志
 - **v1.7.1-2026-10-18**
+  - 新增 `comfyui` 适配器：通过 ComfyUI HTTP API 提交 API 格式工作流，轮询 `/history` 并下载 `/view` 结果；详见 [ComfyUI 配置文档](docs/comfyui.md)。
+  - 支持在配置中直接上传 ComfyUI 导出的 API 格式工作流文件；提示词默认沿采样器 `positive` 链路自动写入，兼容提示词增强开关类工作流，也可显式指定节点与输入名。
+  - 支持参考图上传与 `LoadImage` 节点映射；可选宽高比/分辨率节点映射（含 ComfyUI 枚举值匹配）和尺寸映射，默认预置 1K 常用比例。
   - OpenAI 适配器收敛到 GPT Image 2 / 2.5：默认模型列表调整为 `gpt-image-2.5-sunburst`、`gpt-image-2.5-flare`、`gpt-image-2`，移除 DALL·E 与 GPT Image 1.x 的请求分支、尺寸映射和 `model_family` 配置。
   - OpenAI 新增 1K/1.5K/2K/4K 分辨率控制：按分辨率与宽高比组合下发 `size`，文生图和图生图均生效；尺寸满足 OpenAI 对 16 倍数、最长边 3840、总像素 655,360～8,294,400 的限制。
   - 未指定分辨率时保持原有宽高比预设尺寸；仅指定分辨率时默认按 1:1 出图。
