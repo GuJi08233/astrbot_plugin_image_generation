@@ -9,24 +9,7 @@ from PIL import Image
 from astrbot.api import logger
 
 from ..shared.constants import SUPPORTED_ASPECT_RATIOS, SUPPORTED_RESOLUTIONS
-from ..shared.logging import (
-    log_prefix,
-)
-from ..shared.logging import (
-    mask_sensitive as mask_sensitive,
-)
-from ..shared.logging import (
-    safe_log_error_body as safe_log_error_body,
-)
-from ..shared.logging import (
-    safe_log_mapping as safe_log_mapping,
-)
-from ..shared.logging import (
-    safe_log_text as safe_log_text,
-)
-from ..shared.logging import (
-    safe_log_url as safe_log_url,
-)
+from ..shared.logging import log_prefix, safe_log_error_body
 from ..shared.types import ImageData
 
 ALLOWED_ASPECT_RATIOS = set(SUPPORTED_ASPECT_RATIOS)
@@ -132,11 +115,6 @@ __all__ = (
     "convert_image_format",
     "convert_images_batch",
     "detect_mime_type",
-    "mask_sensitive",
-    "safe_log_error_body",
-    "safe_log_mapping",
-    "safe_log_text",
-    "safe_log_url",
     "validate_aspect_ratio",
     "validate_resolution",
 )

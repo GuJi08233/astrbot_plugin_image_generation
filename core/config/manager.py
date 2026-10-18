@@ -56,7 +56,7 @@ from ..shared.constants import (
     RESULT_INFO_USAGE,
 )
 from ..shared.logging import log_prefix, safe_log_text
-from ..shared.types import AdapterConfig, AdapterType
+from ..shared.types import AdapterConfig
 
 __all__ = (
     "ConfigManager",
@@ -620,18 +620,3 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
     def safety_audit_settings(self) -> SafetyAuditSettings:
         """Return safety audit settings."""
         return self._plugin_config.safety_audit_settings
-
-    # Provider lookup helpers.
-    def get_provider_config(self, adapter_type: AdapterType) -> AdapterConfig | None:
-        """Return provider configuration for one adapter type.
-
-        Args:
-            adapter_type: Adapter type to look up.
-
-        Returns:
-            Matching provider config, or None when unavailable.
-        """
-        for cfg in self._all_provider_configs:
-            if cfg.type == adapter_type:
-                return cfg
-        return None

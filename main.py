@@ -169,9 +169,6 @@ class ImageGenerationPlugin(CommandHandlerMixin, Star):
         # Register LLM tools.
         self._register_llm_tools()
 
-        # Run startup tasks in the background.
-        self.task_manager.create_task(self.task_manager.run_startup_tasks())
-
         logger.info(
             f"{LOG} 插件加载完成，模型: {safe_log_text(self.config_manager.adapter_config.model if self.config_manager.adapter_config else '未知')}"
         )
@@ -843,13 +840,25 @@ class ImageGenerationPlugin(CommandHandlerMixin, Star):
                 split_index, _ = min(delimiter_positions, key=lambda item: item[0])
                 name = preset_text[:split_index].strip()
                 prompt = preset_text[split_index + 1 :].strip()
+                if not name or not prompt:
+                    yield event.plain_result("❌ 格式错误: /预设 添加 名称:内容")
+                    return
                 self.config_manager.save_preset(name, prompt)
                 yield event.plain_result(f"✅ 预设已添加: {name}")
             else:
                 yield event.plain_result("❌ 格式错误: /预设 添加 名称:内容")
         elif cmd_text.startswith("删除 "):
             name = cmd_text[3:].strip()
-            if self.config_manager.delete_preset(name):
+            if not name:
+                yield event.plain_result("❌ 格式错误: /预设 删除 名称")
+            elif self.config_manager.delete_preset(name):
                 yield event.plain_result(f"✅ 预设已删除: {name}")
             else:
                 yield event.plain_result(f"❌ 预设不存在: {name}")
+        else:
+            yield event.plain_result(
+                "❌ 未知操作\n用法:\n"
+                "/预设 - 查看预设与人设\n"
+                "/预设 添加 名称:内容\n"
+                "/预设 删除 名称"
+            )

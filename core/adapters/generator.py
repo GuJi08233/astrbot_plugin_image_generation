@@ -123,11 +123,6 @@ class ImageGenerator:
             )
             return GenerationResult(images=None, error=str(exc))
 
-    def update_model(self, model: str) -> None:
-        """Update the model used by the active adapter."""
-        if self.adapter:
-            self.adapter.update_model(model)
-
     async def update_adapter(self, adapter_config: AdapterConfig) -> None:
         """Update adapter configuration and recreate the adapter.
 

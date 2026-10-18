@@ -62,8 +62,9 @@ export function formatDuration(seconds) {
   if (value < 60) {
     return `${value.toFixed(value < 10 ? 2 : 1)}s`;
   }
-  const minutes = Math.floor(value / 60);
-  const rest = Math.round(value % 60);
+  const total = Math.round(value);
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
   return `${minutes}m ${rest}s`;
 }
 
@@ -91,9 +92,4 @@ export function formatBytes(size) {
     return `${(value / 1024).toFixed(1)} KB`;
   }
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-export function truncate(text, length = 160) {
-  const value = String(text ?? "");
-  return value.length > length ? `${value.slice(0, length - 1)}…` : value;
 }

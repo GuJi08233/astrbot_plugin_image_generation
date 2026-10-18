@@ -119,11 +119,6 @@ class ImageProcessor:
             self._persist_dir = ""
         self._generated_dir = self._persist_dir or self._temp_dir
 
-    @property
-    def generated_dir(self) -> str:
-        """Return the directory used for generated images."""
-        return self._generated_dir
-
     def _prune_persisted_images(self) -> None:
         """Delete the oldest persisted images beyond the configured limit."""
         if not self._persist_enabled or self._persist_limit <= 0:
@@ -135,9 +130,7 @@ class ImageProcessor:
                 if entry.is_file() and entry.name.startswith("gen_")
             ]
         except OSError as exc:
-            logger.warning(
-                f"{LOG} 读取持久化图片目录失败: {safe_log_error_body(exc)}"
-            )
+            logger.warning(f"{LOG} 读取持久化图片目录失败: {safe_log_error_body(exc)}")
             return
         if len(entries) <= self._persist_limit:
             return
@@ -146,9 +139,7 @@ class ImageProcessor:
             try:
                 os.remove(entry.path)
             except OSError as exc:
-                logger.warning(
-                    f"{LOG} 清理持久化图片失败: {safe_log_error_body(exc)}"
-                )
+                logger.warning(f"{LOG} 清理持久化图片失败: {safe_log_error_body(exc)}")
 
     def update_settings(self, max_image_size_mb: int | None = None) -> None:
         """Update runtime image processing settings."""

@@ -388,6 +388,7 @@ const referenceHint = computed(() =>
 const canSubmit = computed(
   () =>
     !submitting.value &&
+    !uploading.value &&
     (form.prompt.trim().length > 0 ||
       selectedPresets.value.length > 0 ||
       selectedPersonas.value.length > 0),

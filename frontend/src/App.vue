@@ -65,7 +65,7 @@
 
         <v-window v-model="tab" class="page-window">
           <v-window-item value="overview">
-            <OverviewView :plugin-state="pluginState" :refresh-key="refreshKey" />
+            <OverviewView :refresh-key="refreshKey" />
           </v-window-item>
           <v-window-item value="generate">
             <GenerateView

@@ -188,6 +188,7 @@ const lightbox = reactive({
 });
 
 let searchTimer = null;
+let pendingReload = false;
 
 const modelOptions = computed(() => [
   { title: t("gallery.modelAll", "全部模型"), value: "" },
@@ -218,6 +219,7 @@ function debouncedReload() {
 
 async function reload() {
   if (loading.value) {
+    pendingReload = true;
     return;
   }
   loading.value = true;
@@ -237,6 +239,10 @@ async function reload() {
     notify(error?.message || t("error.generic", "操作失败"), "error");
   } finally {
     loading.value = false;
+    if (pendingReload) {
+      pendingReload = false;
+      reload();
+    }
   }
 }
 

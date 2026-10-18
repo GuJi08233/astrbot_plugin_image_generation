@@ -168,7 +168,7 @@ class PageStatsMixin:
                 cancelled_count += 1
                 model_terminal_counter[model_name] += 1
             total_images += record.result_count or len(record.result_paths)
-            for index, path_value in enumerate(record.result_paths, 1):
+            for index in range(1, len(record.result_paths) + 1):
                 if self._result_image_path(record, index):
                     available_images += 1
             if record.duration_seconds is not None:

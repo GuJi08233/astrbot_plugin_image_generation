@@ -422,6 +422,8 @@ const lightbox = reactive({
 
 let pollTimer = null;
 let searchTimer = null;
+let pendingReload = null;
+let preserveSelection = false;
 
 const statusOptions = computed(() => [
   { title: t("filter.all", "全部"), value: "all" },
@@ -484,6 +486,7 @@ function debouncedReload() {
 
 async function reload(resetOffset, pageDelta = 0) {
   if (loading.value) {
+    pendingReload = { resetOffset, pageDelta };
     return;
   }
   if (resetOffset) {
@@ -506,9 +509,13 @@ async function reload(resetOffset, pageDelta = 0) {
     total.value = result?.total || 0;
     availableModels.value = result?.models || [];
     availableSources.value = result?.sources || [];
-    if (!tasks.value.some((task) => task.task_id === selectedId.value)) {
+    if (
+      !preserveSelection &&
+      !tasks.value.some((task) => task.task_id === selectedId.value)
+    ) {
       selectedId.value = tasks.value[0]?.task_id || "";
     }
+    preserveSelection = false;
     if (selectedId.value) {
       await selectTask(selectedId.value, { silent: true });
     } else {
@@ -519,6 +526,11 @@ async function reload(resetOffset, pageDelta = 0) {
     notify(error?.message || t("error.generic", "操作失败"), "error");
   } finally {
     loading.value = false;
+    if (pendingReload) {
+      const next = pendingReload;
+      pendingReload = null;
+      reload(next.resetOffset, next.pageDelta);
+    }
   }
 }
 
@@ -532,6 +544,9 @@ async function selectTask(taskId, { silent = false } = {}) {
   selectedId.value = taskId;
   try {
     const result = await apiGet(`page/tasks/${encodeURIComponent(taskId)}`);
+    if (selectedId.value !== taskId) {
+      return;
+    }
     detail.value = result?.task || null;
     for (const image of detail.value?.result_images || []) {
       loadPreview(detail.value.task_id, image.index);
@@ -618,6 +633,7 @@ function downloadLightbox() {
 function handleOpenTask(event) {
   const taskId = String(event?.detail || "");
   if (taskId) {
+    preserveSelection = true;
     selectTask(taskId);
   }
 }

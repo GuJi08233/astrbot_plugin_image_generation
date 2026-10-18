@@ -13,7 +13,6 @@ from .logging import (
 )
 from .types import (
     AdapterConfig,
-    AdapterMetadata,
     AdapterType,
     GenerationRequest,
     GenerationResult,
@@ -23,7 +22,6 @@ from .types import (
 
 __all__ = (
     "AdapterConfig",
-    "AdapterMetadata",
     "AdapterType",
     "GenerationRequest",
     "GenerationResult",

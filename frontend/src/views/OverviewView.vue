@@ -130,25 +130,15 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { apiGet } from "../api";
 import { t } from "../i18n";
-import { formatDuration, statusLabel } from "../utils";
+import { formatDuration, statusCssColor, statusLabel } from "../utils";
 import StatCard from "../components/StatCard.vue";
 import BarList from "../components/BarList.vue";
 import TrendLineChart from "../components/TrendLineChart.vue";
 import DonutChart from "../components/DonutChart.vue";
 
 const props = defineProps({
-  pluginState: { type: Object, default: null },
   refreshKey: { type: Number, default: 0 },
 });
-
-const STATUS_COLORS = {
-  succeeded: "rgb(var(--v-theme-success))",
-  failed: "rgb(var(--v-theme-error))",
-  cancelled: "rgba(var(--v-theme-on-surface), 0.32)",
-  running: "rgb(var(--v-theme-primary))",
-  queued: "rgb(var(--v-theme-secondary))",
-  cancelling: "rgb(var(--v-theme-warning))",
-};
 
 const days = ref(7);
 const stats = ref(null);
@@ -228,7 +218,7 @@ const statusItems = computed(() =>
   (stats.value?.status_distribution || []).map((item) => ({
     name: statusLabel(item.name),
     count: item.count,
-    color: STATUS_COLORS[item.name],
+    color: statusCssColor(item.name),
   })),
 );
 

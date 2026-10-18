@@ -17,6 +17,7 @@ from astrbot.api.web import (
     request,
 )
 
+from ..generation.image_processor import GENERATED_IMAGE_EXTENSIONS
 from ..shared.logging import safe_log_text
 from ..shared.types import ImageCapability
 from ..tasks.models import GenerationTaskRecord
@@ -25,14 +26,6 @@ from .stats import PageStatsMixin
 
 PLUGIN_NAME = "astrbot_plugin_image_generation"
 PAGE_PREVIEW_MAX_BYTES = 12 * 1024 * 1024
-PAGE_IMAGE_EXTENSIONS = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/gif": ".gif",
-    "image/webp": ".webp",
-    "image/heic": ".heic",
-    "image/heif": ".heif",
-}
 
 
 class ImageGenerationPageAPI(PagePayloadMixin, PageStatsMixin):
@@ -447,9 +440,7 @@ class ImageGenerationPageAPI(PagePayloadMixin, PageStatsMixin):
                 "total": total,
                 "offset": offset,
                 "limit": limit,
-                "available_count": sum(
-                    1 for item in page_items if item.get("available")
-                ),
+                "available_count": sum(1 for item in items if item.get("available")),
                 "models": sorted(model_names),
             }
         )
@@ -481,7 +472,7 @@ class ImageGenerationPageAPI(PagePayloadMixin, PageStatsMixin):
         )
         if not image_data:
             return error_response("上传文件不是受支持的图片", status_code=400)
-        suffix = PAGE_IMAGE_EXTENSIONS.get(image_data.mime_type, ".png")
+        suffix = GENERATED_IMAGE_EXTENSIONS.get(image_data.mime_type, ".png")
         digest = hashlib.md5(data).hexdigest()[:12]
         token = (
             f"upload_{int(asyncio.get_running_loop().time() * 1000)}_{digest}{suffix}"
