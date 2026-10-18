@@ -298,22 +298,13 @@
             "description": "Retry count override",
             "hint": "Set to 0 to use the retry count from Runtime Control."
           },
-          "model_family": {
-            "description": "Model family",
-            "hint": "Affects the OpenAI request format. auto detects the gpt-image or dall-e family from the model name.",
-            "labels": [
-              "Auto",
-              "GPT Image",
-              "DALL·E"
-            ]
-          },
           "enable_streaming": {
             "description": "Use SSE streaming",
             "hint": "Enabled by default for text-to-image requests. Disable this for compatible endpoints that do not support SSE and expect a normal JSON response."
           },
           "output_format": {
             "description": "GPT Image output format",
-            "hint": "PNG keeps lossless quality. JPEG produces a smaller response and is useful for relays that truncate large Base64 payloads. Only applies to GPT Image models.",
+            "hint": "PNG keeps lossless quality. JPEG produces a smaller response and is useful for relays that truncate large Base64 payloads.",
             "labels": [
               "png",
               "jpeg",
@@ -761,6 +752,64 @@
           "success_status_codes": {
             "description": "Successful HTTP status codes",
             "hint": "Responses with these HTTP status codes are treated as successful."
+          }
+        },
+        "comfyui": {
+          "name": "ComfyUI workflow",
+          "hint": "Call a local or remote ComfyUI server, submit API-format workflows to /prompt, and poll for results.",
+          "available_models": {
+            "description": "Available models (display only)",
+            "hint": "Any display text is allowed. It is only used by the /生图模型 list, the page selector, and logs; it is never sent to ComfyUI. The actual model is defined by loader nodes in the workflow, so switching this list does not change the workflow."
+          },
+          "workflow_file": {
+            "description": "Workflow file",
+            "hint": "Upload a JSON file exported from ComfyUI with \"Export (API)\". API format is required, not the UI workflow. Replacing the file takes effect on the next generation."
+          },
+          "prompt_node_id": {
+            "description": "Prompt node ID",
+            "hint": "Optional. Separate multiple node IDs with commas. When empty, the adapter follows the sampler positive input to find a text node automatically."
+          },
+          "prompt_input": {
+            "description": "Prompt input name",
+            "hint": "Optional. Input field name on the prompt node. When empty, prompt or text is selected automatically."
+          },
+          "image_node_id": {
+            "description": "Image node ID",
+            "hint": "LoadImage node IDs that receive uploaded reference images, in reference-image order. When empty, LoadImage nodes are detected automatically."
+          },
+          "aspect_ratio_node_id": {
+            "description": "Aspect-ratio node ID",
+            "hint": "Optional. When empty, a node with a literal aspect_ratio input is detected. Enum values are matched from ComfyUI node definitions."
+          },
+          "width_node_id": {
+            "description": "Size node ID",
+            "hint": "Optional. When empty, a node with numeric width and height inputs (for example EmptyLatentImage) is detected."
+          },
+          "size_map_json": {
+            "description": "Size mapping",
+            "hint": "Optional. Maps resolution/aspect ratio to WxH. Common 1K sizes are preset. Example: {\"1K:16:9\":\"1024x576\",\"1K:1:1\":\"1024x1024\"}. 2K/4K use much more VRAM; add them as needed. Matching order: resolution:aspect ratio → resolution → aspect ratio → default."
+          },
+          "timeout": {
+            "description": "Timeout (seconds)",
+            "hint": "Total generation wait time. On timeout the task is treated as failed and the adapter tries to cancel it. Set to 0 to use the timeout from Runtime Control."
+          },
+          "poll_interval": {
+            "description": "Poll interval (seconds)",
+            "hint": "Interval between /history checks. 1-2 seconds is recommended for a local ComfyUI server."
+          },
+          "cancel_on_timeout": {
+            "description": "Cancel task on timeout",
+            "hint": "When enabled, a timed-out task is cancelled via /api/jobs/{id}/cancel; if that endpoint is unavailable, the adapter only tries to remove it from the queue. Other tasks are never interrupted."
+          },
+          "capability_options": {
+            "description": "Model capabilities",
+            "hint": "Text to image is declared by default. Enable image to image only after configuring image nodes; map aspect ratio and resolution to workflow nodes first.",
+            "labels": [
+              "Text to image",
+              "Image to image",
+              "Aspect ratio",
+              "Resolution"
+            ]
           }
         }
       }

@@ -20,6 +20,7 @@ class AdapterType(str, enum.Enum):
     CODEX_RESPONSES = "codex_responses"
     MODELSCOPE = "modelscope"
     CUSTOM_HTTP = "custom_http"
+    COMFYUI = "comfyui"
 
 
 class ImageCapability(enum.Flag):

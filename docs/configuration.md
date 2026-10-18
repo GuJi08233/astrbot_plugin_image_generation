@@ -26,7 +26,7 @@
 常见专属配置：
 
 - `openai_chat`：可配置提示词前缀、`modalities` 和额外请求体 JSON。
-- `openai`：可选择模型系列，`auto` 会按模型名识别 GPT Image 或 DALL-E 请求格式；文生图默认可使用 SSE，不支持流式的兼容站点可关闭该开关。GPT Image 可选择 png/jpeg/webp 输出格式，默认 png。
+- `openai`：使用 GPT Image 2 / 2.5 模型；支持 1K/1.5K/2K/4K 分辨率与宽高比组合。文生图默认可使用 SSE，不支持流式的兼容站点可关闭该开关。可选择 png/jpeg/webp 输出格式，默认 png。
 - `volcengine_ark`：仅适配 Seedream 5.0 Pro / Flash，支持标准 API 与 Agent Plan 切换；Agent Plan 需专属 API Key 和套餐模型（默认列表含 `doubao-seedream-5.0-pro`）。分辨率支持 1K/1.5K/2K，参考图数量不额外限制；Flash 的 `fast` 按 standard 发送。
 - `gitee_ai`：可通过图像接口模式自动或手动选择 `generations` / `edits`。
 - `siliconflow_adapter`：可配置反向提示词、推理步数和提示词遵循强度。
@@ -34,6 +34,7 @@
 - `codex_responses`：固定发送 `model`、`input` 与 `tools: [{"type":"image_generation","output_format":"png"}]`；填写服务根地址和接口路径（默认 `/codex/responses`，标准 Responses 可填 `/v1/responses`）。无参考图时发送文本 `input`，有参考图时发送多模态 Responses `input`，仅支持同步结果；详见 [Codex Responses 接口配置](codex-responses.md)。
 - `modelscope`：调用 API-Inference 异步图像接口，使用 ModelScope Access Token 提交、轮询并下载结果；可配置轮询间隔、总等待时间、反向提示词和尺寸映射。默认模板仅启用文生图；需要模型明确支持后才启用图生图。收到 `task_id` 后不会通过外层重试重新提交任务；详见 [ModelScope 接口配置](modelscope.md)。
 - `custom_http`：可配置请求方法、请求头、查询参数、请求体、图片结果路径、结果类型、错误路径和成功状态码；详见 [自定义 HTTP 接口配置](custom-http.md)。
+- `comfyui`：上传 ComfyUI API 格式工作流文件并轮询结果；支持提示词自动写入、参考图上传、宽高比/分辨率节点映射和尺寸映射。可用模型列表仅用于显示，实际模型由工作流加载节点决定；详见 [ComfyUI 工作流配置](comfyui.md)。
 
 ## 生成与结果配置
 

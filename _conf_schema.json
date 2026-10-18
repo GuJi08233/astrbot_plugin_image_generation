@@ -237,11 +237,9 @@
             "hint": "用于 /生图模型 命令切换；请按账号实际可用模型维护。",
             "type": "list",
             "default": [
-              "gpt-image-2",
-              "gpt-image-1.5",
-              "gpt-image-1",
-              "gpt-image-1-mini",
-              "dall-e-3"
+              "gpt-image-2.5-sunburst",
+              "gpt-image-2.5-flare",
+              "gpt-image-2"
             ]
           },
           "capability_options": {
@@ -257,7 +255,8 @@
             "default": [
               "文生图",
               "图生图",
-              "宽高比"
+              "宽高比",
+              "分辨率"
             ]
           },
           "timeout": {
@@ -282,17 +281,6 @@
             },
             "default": 0
           },
-          "model_family": {
-            "description": "模型系列",
-            "hint": "影响 OpenAI 请求格式。auto 会按模型名自动识别 gpt-image 或 dall-e 系列。",
-            "type": "string",
-            "options": [
-              "auto",
-              "gpt-image",
-              "dall-e"
-            ],
-            "default": "auto"
-          },
           "enable_streaming": {
             "description": "使用 SSE 流式请求",
             "hint": "文生图默认开启 SSE。部分兼容站点不支持流式时可关闭，改为普通 JSON 响应。",
@@ -301,7 +289,7 @@
           },
           "output_format": {
             "description": "GPT Image 输出格式",
-            "hint": "PNG 保留无损质量；JPEG 响应更小，适合会截断大型 Base64 响应的中转接口。仅影响 GPT Image 系列。",
+            "hint": "PNG 保留无损质量；JPEG 响应更小，适合会截断大型 Base64 响应的中转接口。",
             "type": "string",
             "options": [
               "png",
@@ -1023,6 +1011,145 @@
               "step": 1
             },
             "default": 0
+          }
+        }
+      },
+      "comfyui": {
+        "name": "ComfyUI 工作流",
+        "hint": "调用本机或远程 ComfyUI，通过 /prompt 提交 API 格式工作流并轮询结果。",
+        "display_item": "name",
+        "hide_hint_in_list": true,
+        "items": {
+          "name": {
+            "description": "供应商名称",
+            "hint": "用于显示和模型选择；格式为“供应商名称/模型名称”。",
+            "type": "string",
+            "default": "ComfyUI"
+          },
+          "base_url": {
+            "description": "接口地址",
+            "hint": "ComfyUI 服务地址，默认 http://127.0.0.1:8188；远程部署时填写实际地址。",
+            "type": "string",
+            "default": "http://127.0.0.1:8188"
+          },
+          "proxy": {
+            "description": "代理地址",
+            "hint": "可选，示例：http://127.0.0.1:7890。本机 ComfyUI 通常不需要。",
+            "type": "string",
+            "default": ""
+          },
+          "api_keys": {
+            "description": "API 密钥",
+            "hint": "可选。填写后以 Bearer 方式发送，适用于带鉴权的反向代理；ComfyUI 本体通常不需要。",
+            "type": "list",
+            "default": []
+          },
+          "available_models": {
+            "description": "可用模型列表（仅显示）",
+            "hint": "可填任意显示文本，仅用于 /生图模型 列表、页面选择和日志展示，不会发送给 ComfyUI；实际模型由工作流中的加载节点决定，切换该列表不会改变工作流。",
+            "type": "list",
+            "default": [
+              "comfyui-workflow"
+            ]
+          },
+          "capability_options": {
+            "description": "模型能力",
+            "hint": "默认仅声明文生图。需要图生图时勾选并配置图片节点；尺寸能力需要在下方映射到工作流节点。",
+            "type": "list",
+            "options": [
+              "文生图",
+              "图生图",
+              "宽高比",
+              "分辨率"
+            ],
+            "default": [
+              "文生图"
+            ]
+          },
+          "timeout": {
+            "description": "超时时间（秒）",
+            "hint": "总生成等待时间；超时视为任务失败并尝试取消 ComfyUI 任务。填 0 表示使用“运行控制”中的超时时间。",
+            "type": "int",
+            "slider": {
+              "min": 0,
+              "max": 600,
+              "step": 10
+            },
+            "default": 0
+          },
+          "max_retry_attempts": {
+            "description": "重试次数覆盖",
+            "hint": "填 0 表示使用“运行控制”中的重试次数。工作流校验失败不会重试。",
+            "type": "int",
+            "slider": {
+              "min": 0,
+              "max": 10,
+              "step": 1
+            },
+            "default": 0
+          },
+          "workflow_file": {
+            "description": "工作流文件",
+            "hint": "上传 ComfyUI「导出（API）」得到的 JSON 文件。仅支持 API 格式，不是界面工作流；重新上传后下次生图自动生效。",
+            "type": "file",
+            "file_types": [
+              "json"
+            ]
+          },
+          "prompt_node_id": {
+            "description": "提示词节点 ID",
+            "hint": "可选。多个节点用逗号分隔；留空时从采样器的 positive 输入向上自动查找文本节点。",
+            "type": "string",
+            "default": ""
+          },
+          "prompt_input": {
+            "description": "提示词输入名",
+            "hint": "可选。指定提示词节点中的输入字段名，留空时自动选择 prompt 或 text。",
+            "type": "string",
+            "default": ""
+          },
+          "image_node_id": {
+            "description": "图片节点 ID",
+            "hint": "图生图时接收上传图片的 LoadImage 节点 ID；多个节点按参考图顺序用逗号分隔。留空自动查找 LoadImage。",
+            "type": "string",
+            "default": ""
+          },
+          "aspect_ratio_node_id": {
+            "description": "宽高比节点 ID",
+            "hint": "可选。留空自动查找带 aspect_ratio 文本输入的节点；枚举值会从 ComfyUI 节点定义中匹配。",
+            "type": "string",
+            "default": ""
+          },
+          "width_node_id": {
+            "description": "尺寸节点 ID",
+            "hint": "可选。留空自动查找同时带 width 和 height 数值输入的节点，例如 EmptyLatentImage。",
+            "type": "string",
+            "default": ""
+          },
+          "size_map_json": {
+            "description": "尺寸映射",
+            "hint": "可选。把分辨率/宽高比映射为 WxH，默认预置 1K 常用比例。示例：{\"1K:16:9\":\"1024x576\",\"1K:1:1\":\"1024x1024\"}。2K/4K 显存占用更高，可按需补充。匹配顺序：分辨率:宽高比 → 分辨率 → 宽高比 → default。",
+            "type": "string",
+            "editor_mode": true,
+            "editor_language": "json",
+            "default": "{\n  \"1K:1:1\": \"1024x1024\",\n  \"1K:4:3\": \"1024x768\",\n  \"1K:3:4\": \"768x1024\",\n  \"1K:16:9\": \"1024x576\",\n  \"1K:9:16\": \"576x1024\"\n}"
+          },
+          "poll_interval": {
+            "description": "轮询间隔（秒）",
+            "hint": "查询 /history 的间隔。通常建议 1～2 秒。",
+            "type": "int",
+            "slider": {
+              "min": 1,
+              "max": 30,
+              "step": 1
+            },
+            "default": 2
+          },
+          "cancel_on_timeout": {
+            "description": "超时后取消任务",
+            "hint": "开启后，超时会尝试取消该 ComfyUI 任务：优先调用 /api/jobs/{id}/cancel，失败时仅尝试移出排队。不会中断其他任务。",
+            "type": "bool",
+            "default": true
           }
         }
       },

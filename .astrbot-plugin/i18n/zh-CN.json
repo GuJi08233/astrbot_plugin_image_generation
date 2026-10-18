@@ -198,20 +198,13 @@
               "分辨率"
             ]
           },
-          "model_family": {
-            "labels": [
-              "自动",
-              "GPT Image",
-              "DALL·E"
-            ]
-          },
           "enable_streaming": {
             "description": "使用 SSE 流式请求",
             "hint": "文生图默认开启 SSE。部分兼容站点不支持流式时可关闭，改为普通 JSON 响应。"
           },
           "output_format": {
             "description": "GPT Image 输出格式",
-            "hint": "PNG 保留无损质量；JPEG 响应更小，适合会截断大型 Base64 响应的中转接口。仅影响 GPT Image 系列。",
+            "hint": "PNG 保留无损质量；JPEG 响应更小，适合会截断大型 Base64 响应的中转接口。",
             "labels": [
               "png",
               "jpeg",
@@ -346,6 +339,16 @@
               "Base64",
               "Data URL",
               "URL"
+            ]
+          }
+        },
+        "comfyui": {
+          "capability_options": {
+            "labels": [
+              "文生图",
+              "图生图",
+              "宽高比",
+              "分辨率"
             ]
           }
         }

@@ -6,7 +6,7 @@
 
 ## 功能
 
-- **多供应商与多适配器**：内置 Gemini、OpenAI Chat/Images、火山方舟、Gitee AI、硅基流动、Agnes AI、Grok、Codex Responses、ModelScope 和自定义 HTTP；每个供应商可独立配置接口、代理、密钥、模型和能力，多个 Key 自动轮询。
+- **多供应商与多适配器**：内置 Gemini、OpenAI Chat/Images、火山方舟、Gitee AI、硅基流动、Agnes AI、Grok、Codex Responses、ModelScope、自定义 HTTP 和 ComfyUI 工作流；每个供应商可独立配置接口、代理、密钥、模型和能力，多个 Key 自动轮询。
 - **文生图与图生图**：自动收集当前消息、引用消息、@ 用户头像和人设参考图；模型不支持图生图时自动忽略参考图。
 - **引用/转发取词**：引用消息或合并转发卡片会取第一层文字并入提示词（最多 1000 字符），不取其中的图片。
 - **任务体系**：支持多图生成、请求级并发、任务级队列和分批发送；可查看/取消任务，历史可持久化。
@@ -35,7 +35,7 @@
 | :--- | :--- | :---: | :---: | :---: | :--- |
 | `gemini` | Gemini 原生 `generateContent` | ✅ | ✅ | ✅ | Gemini 原生图像生成接口。 |
 | `openai_chat` | OpenAI 兼容 `chat/completions` | ✅ | ✅ | ❌ | 通用 Chat 生图，可配置提示词前缀、输出模态和额外请求体。 |
-| `openai` | Images `/v1/images/generations`、`/edits` | ✅ | ✅ | ✅ | DALL-E / GPT Image；图生图仅 GPT Image 系列支持。 |
+| `openai` | Images `/v1/images/generations`、`/edits` | ✅ | ✅ | ✅ | GPT Image 2 / 2.5；支持参考图编辑与 1K/1.5K/2K/4K 分辨率。 |
 | `volcengine_ark` | 方舟 `/api/v3`、Agent Plan `/api/plan/v3` | ✅ | ✅ | ✅ | Seedream 5.0 Pro / Flash，支持两种接口模式。 |
 | `gitee_ai` | `/v1/images/generations`、`/edits` | ✅ | ✅ | ✅ | 可自动或手动选择生成/编辑接口。 |
 | `siliconflow_adapter` | SiliconFlow Images API | ✅ | ✅ | ✅ | 支持 Kolors、Qwen-Image 等，可配置反向提示词、步数。 |
@@ -44,14 +44,15 @@
 | `codex_responses` | Codex / OpenAI Responses API | ✅ | ✅ | ❌ | 固定 Responses 请求，仅支持同步结果。 |
 | `modelscope` | API-Inference + 任务轮询 | ✅ | 按配置 | 按配置 | 异步提交与轮询，详见 [ModelScope 配置](docs/modelscope.md)。 |
 | `custom_http` | 自定义 HTTP JSON 接口 | ✅ | ✅ | ✅ | 高级模板，详见 [自定义 HTTP 配置](docs/custom-http.md)。 |
+| `comfyui` | ComfyUI `/prompt` + `/history` | ✅ | 按配置 | 按配置 | 上传 API 格式工作流并轮询结果，详见 [ComfyUI 配置](docs/comfyui.md)。 |
 
 > 能力以“模型能力”配置为准。未勾选的能力不会在请求中使用，LLM 工具参数也会按当前能力动态隐藏。
 
 ## 文档
-
+> 具体配置细节见如下文件（如在AstrBot打不开，可以到仓库查看）
 - [配置说明](docs/configuration.md)：所有配置项、默认值、占位符与适配器专属参数。
 - [使用说明](docs/usage.md)：尺寸参数识别、引用/转发取词、任务体系。
-- 接口配置：[ModelScope](docs/modelscope.md) · [Codex Responses](docs/codex-responses.md) · [自定义 HTTP](docs/custom-http.md)
+- 接口配置：[ModelScope](docs/modelscope.md) · [Codex Responses](docs/codex-responses.md) · [自定义 HTTP](docs/custom-http.md) · [ComfyUI](docs/comfyui.md)
 
 ## 使用示例
 
