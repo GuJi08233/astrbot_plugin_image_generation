@@ -7,6 +7,8 @@
   - 按官方文档补充 1K/1.5K/2K 分辨率与尺寸映射；新增 `output_format`（png/jpeg）配置；`fast` 提示词优化仅 Pro 支持，Flash 自动按 standard 发送。
   - 「添加水印」默认关闭，并同步更新相关配置提示。
   - 移除 Jimeng2API 适配器及相关配置、自动领积分任务和文档说明,因为上游项目已停止维护。
+  - Agnes AI 新增国际版 / 中国版接口区域切换，修复填写中国版地址后无法调用的问题。
+  - Agnes AI 2.1/2.5 改为按官方文档发送 `size` 档位 + `ratio`，并始终发送必填的 `size`，修复分辨率不生效的问题；默认模型列表补充 `agnes-image-2.5-flash`。
 
 - **v1.6.11-2026-10-14**
   - 合并 [PR #70](https://github.com/Railgun19457/astrbot_plugin_image_generation/pull/70)（@lingyun14）：引用或转发合并转发卡片时，卡片里第一层消息的文字会作为素材并入提示词。

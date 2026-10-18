@@ -4,10 +4,6 @@
 
 面向 AstrBot 的通用图像生成插件，支持多供应商、文生图、图生图、LLM 工具调用、预设/人设、任务队列、限流、任务历史和安全审核。
 
-> [!warning]
-> 人设添加功能请使用 AstrBot `4.25.3` 以上版本。
-> 从早期版本升级前建议先备份配置文件，尤其是包含预设、人设和供应商配置的环境。
-
 ## 功能
 
 - 多供应商配置：一个插件中配置多个生图服务，每个供应商可独立设置 API Key、Base URL、代理、模型列表和模型能力。
@@ -46,7 +42,7 @@
 | `volcengine_ark`      | 火山方舟 Images Generations `/api/v3`、Agent Plan `/api/plan/v3` |   ✅    |   ✅    |    ✅     | Seedream 5.0 Pro / Flash；支持标准 API 与 Agent Plan 接口切换，以及水印、输出格式和提示词优化。 |
 | `gitee_ai`            | Gitee AI `/v1/images/generations`、`/v1/images/edits`          |   ✅    |   ✅    |    ✅     | Gitee AI 通用图像接口，可自动或手动选择生成/编辑接口。                                          |
 | `siliconflow_adapter` | SiliconFlow Images API `/v1/images/generations`                |   ✅    |   ✅    |    ✅     | 支持 Kolors、Qwen-Image、Qwen-Image-Edit、Z-Image，并可配置反向提示词、步数和提示词遵循强度。   |
-| `agnes_ai`            | Agnes AI Images API `/v1/images/generations`                   |   ✅    |   ✅    |    ✅     | 支持 `agnes-image-2.0-flash` 和 `agnes-image-2.1-flash`；参考图通过 `extra_body.image` 数组发送。 |
+| `agnes_ai`            | Agnes AI Images API `/v1/images/generations`                   |   ✅    |   ✅    |    ✅     | 支持 `agnes-image-2.0/2.1/2.5-flash` 和国际版/中国版接口；参考图通过 `extra_body.image` 发送。 |
 | `grok`                | xAI Images API `/v1/images/generations`、`/v1/images/edits`    |   ✅    |   ✅    |    ✅     | 按 xAI 官方 JSON 格式请求；单图用 `image`，多图用 `images`（最多 3 张）。                       |
 | `codex_responses`     | Codex / OpenAI Responses API                                   |   ✅    |   ✅    |    ❌     | 固定请求 `model`、`input` 和 `image_generation` 工具；接口路径默认为 `/codex/responses`，可改为 `/v1/responses`。 |
 | `modelscope`          | ModelScope API-Inference `/v1/images/generations` + task poll  |   ✅    | 按配置 | 按配置 | 异步提交、轮询并下载结果；收到远端任务 ID 后不会自动重新提交；详见 [ModelScope 接口配置](docs/modelscope.md)。 |
@@ -84,7 +80,7 @@
 - `volcengine_ark`：仅适配 Seedream 5.0 Pro / Flash，支持标准 API 与 Agent Plan 切换；Agent Plan 需专属 API Key 和套餐模型（默认列表含 `doubao-seedream-5.0-pro`）。分辨率支持 1K/1.5K/2K，参考图数量不额外限制；Flash 的 `fast` 按 standard 发送。
 - `gitee_ai`：可通过图像接口模式自动或手动选择 `generations` / `edits`。
 - `siliconflow_adapter`：可配置反向提示词、推理步数和提示词遵循强度。
-- `agnes_ai`：可选择 `base64` 或 `url` 响应格式；图生图参考图通过 `extra_body.image` 数组发送。
+- `agnes_ai`：可选择国际版（`https://apihub.agnes-ai.com`）或中国版（`https://api.agnes-ai.cn`）接口，也可直接填写接口地址；API Key 按区域区分。2.1/2.5 使用 `size` 档位 + `ratio`，2.0 使用像素 `size`。可选择 `base64` 或 `url` 响应格式，图生图参考图通过 `extra_body.image` 数组发送。
 - `codex_responses`：固定发送 `model`、`input` 与 `tools: [{"type":"image_generation","output_format":"png"}]`；填写服务根地址和接口路径（默认 `/codex/responses`，标准 Responses 可填 `/v1/responses`），使用 Bearer API Key。无参考图时发送文本 `input`，有参考图时发送多模态 Responses `input`，仅支持同步结果；详见 [Codex Responses 接口配置](docs/codex-responses.md)。
 - `modelscope`：调用 API-Inference 异步图像接口，使用 ModelScope Access Token 提交、轮询并下载结果；可配置轮询间隔、总等待时间、反向提示词和尺寸映射。默认模板仅启用文生图；需要模型明确支持后才启用图生图。收到 `task_id` 后不会通过外层重试重新提交任务；详见 [ModelScope 接口配置](docs/modelscope.md)。
 - `custom_http`：可配置请求方法、请求头、查询参数、请求体、图片结果路径、结果类型、错误路径和成功状态码。

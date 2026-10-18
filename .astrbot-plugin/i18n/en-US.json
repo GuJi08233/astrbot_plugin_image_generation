@@ -491,7 +491,15 @@
           "hint": "Calls Agnes AI image API /v1/images/generations.",
           "base_url": {
             "description": "API endpoint",
-            "hint": "Optional. Leave empty to use https://apihub.agnes-ai.com, or set a compatible endpoint."
+            "hint": "Optional. Leave empty to use the region default, or set a compatible endpoint."
+          },
+          "api_region": {
+            "description": "API region",
+            "hint": "international uses https://apihub.agnes-ai.com; china uses https://api.agnes-ai.cn. API keys are region-specific.",
+            "labels": [
+              "International",
+              "China"
+            ]
           },
           "proxy": {
             "description": "Proxy URL",
@@ -515,7 +523,7 @@
           },
           "capability_options": {
             "description": "Model capabilities",
-            "hint": "Select the capabilities actually supported by the model. Aspect ratio is mapped to the size field and is not sent as aspect_ratio.",
+            "hint": "Select the capabilities actually supported by the model. 2.1/2.5 use a size tier plus ratio; 2.0 maps aspect ratio to a pixel size.",
             "labels": [
               "Text to image",
               "Image to image",

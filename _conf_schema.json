@@ -662,9 +662,19 @@
           },
           "base_url": {
             "description": "接口地址",
-            "hint": "可选。留空使用 https://apihub.agnes-ai.com；也可填写兼容接口地址。",
+            "hint": "可选。留空时按接口区域使用默认地址；填写后优先使用此处地址。",
             "type": "string",
             "default": ""
+          },
+          "api_region": {
+            "description": "接口区域",
+            "hint": "international 使用 https://apihub.agnes-ai.com；china 使用 https://api.agnes-ai.cn。API Key 按区域区分。",
+            "type": "string",
+            "options": [
+              "international",
+              "china"
+            ],
+            "default": "international"
           },
           "proxy": {
             "description": "代理地址",
@@ -684,7 +694,8 @@
             "type": "list",
             "default": [
               "agnes-image-2.0-flash",
-              "agnes-image-2.1-flash"
+              "agnes-image-2.1-flash",
+              "agnes-image-2.5-flash"
             ]
           },
           "response_format": {
@@ -699,7 +710,7 @@
           },
           "capability_options": {
             "description": "模型能力",
-            "hint": "按模型实际能力勾选；宽高比会映射为 size 字段，不会发送 aspect_ratio。",
+            "hint": "按模型实际能力勾选。2.1/2.5 使用 size 档位 + ratio；2.0 将宽高比映射为像素 size。",
             "type": "list",
             "options": [
               "文生图",

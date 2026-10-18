@@ -277,6 +277,12 @@
           }
         },
         "agnes_ai": {
+          "api_region": {
+            "labels": [
+              "国际版",
+              "中国版"
+            ]
+          },
           "response_format": {
             "labels": [
               "Base64",
