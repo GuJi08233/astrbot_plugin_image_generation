@@ -53,7 +53,6 @@ from .shared.logging import (
 )
 from .shared.types import (
     AdapterConfig,
-    AdapterMetadata,
     AdapterType,
     GenerationRequest,
     GenerationResult,
@@ -97,7 +96,6 @@ __all__ = [
     "SafetyAuditor",
     # Data types.
     "AdapterConfig",
-    "AdapterMetadata",
     "AdapterType",
     "GenerationRequest",
     "GenerationResult",

@@ -30,7 +30,6 @@ from .runtime import (
     BackgroundTaskMixin,
     GenerationQueueRunnerMixin,
     GenerationTaskNotifierMixin,
-    TaskSchedulerMixin,
 )
 from ..shared.logging import (
     format_log_event,
@@ -87,9 +86,8 @@ class TaskManager(
     BackgroundTaskMixin,
     GenerationQueueRunnerMixin,
     GenerationTaskNotifierMixin,
-    TaskSchedulerMixin,
 ):
-    """Unified task manager for background, scheduled, and generation tasks."""
+    """Unified task manager for background and generation tasks."""
 
     def __init__(
         self,
@@ -100,12 +98,6 @@ class TaskManager(
         persistence_file: str | Path | None = None,
     ):
         self.background_tasks: set[asyncio.Task] = set()
-        self._daily_tasks: dict[str, asyncio.Task] = {}
-        self._last_run_dates: dict[str, str] = {}
-        self._startup_tasks: list[
-            tuple[str, Callable[[], Coroutine[Any, Any, Any]]]
-        ] = []
-        self._startup_completed: bool = False
         self._generation_tasks: dict[str, GenerationTaskRecord] = {}
         self._generation_terminal_callbacks: dict[
             str, list[GenerationTaskCallback]
@@ -274,6 +266,24 @@ class TaskManager(
                     status=GenerationTaskItemStatus.CANCELLED,
                     error=record.error,
                 )
+                if (
+                    usage_manager is not None
+                    and record.usage_scope
+                    and not record.quota_settled
+                    and not record.quota_released
+                ):
+                    # restore_reservations() reserved quota for this active task.
+                    # The task cannot resume after a restart, so settle the
+                    # images it produced and release the unused reservation.
+                    usage_manager.settle_usage(
+                        record.usage_scope,
+                        is_admin=record.is_usage_limit_admin,
+                        reserved_count=record.reserved_count,
+                        actual_count=record.result_count or len(record.result_paths),
+                        quota_date=record.quota_date,
+                    )
+                    record.quota_settled = True
+                    record.quota_released = True
                 history_changed = True
             restored_tasks[record.task_id] = record
 

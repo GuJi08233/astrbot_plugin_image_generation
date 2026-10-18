@@ -1777,6 +1777,23 @@
           "step": 1
         },
         "default": 0
+      },
+      "persist_generated_images": {
+        "description": "持久化生成的图片",
+        "hint": "开启后生成的图片保存在插件数据目录 generated_images 下，不会随 AstrBot 临时目录被清理；关闭后仍写入 AstrBot 临时目录。",
+        "type": "bool",
+        "default": true
+      },
+      "persisted_image_limit": {
+        "description": "持久化图片数量上限",
+        "hint": "最多保留的持久化图片数量，超出后按生成时间删除最旧的图片；设置为 0 表示不限制。",
+        "type": "int",
+        "slider": {
+          "min": 0,
+          "max": 10000,
+          "step": 100
+        },
+        "default": 0
       }
     }
   }

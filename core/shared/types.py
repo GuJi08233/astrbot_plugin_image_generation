@@ -34,14 +34,6 @@ class ImageCapability(enum.Flag):
 
 
 @dataclass
-class AdapterMetadata:
-    """Metadata describing adapter capabilities."""
-
-    name: str
-    capabilities: ImageCapability = ImageCapability.TEXT_TO_IMAGE
-
-
-@dataclass
 class AdapterConfig:
     """Configuration required to construct an adapter."""
 

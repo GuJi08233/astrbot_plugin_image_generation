@@ -85,7 +85,61 @@ class ImageProcessor:
         if allowed_local_base_dirs:
             base_dirs.extend(allowed_local_base_dirs)
         self._allowed_local_base_dirs = self._normalize_allowed_base_dirs(base_dirs)
+        self._persist_enabled = False
+        self._persist_dir = ""
+        self._persist_limit = 0
+        self._generated_dir = self._temp_dir
         os.makedirs(self._temp_dir, exist_ok=True)
+
+    def configure_generated_output(
+        self,
+        *,
+        enabled: bool,
+        persist_dir: str | os.PathLike[str] | None,
+        limit: int,
+    ) -> None:
+        """Configure where generated images are stored and how many are kept.
+
+        Args:
+            enabled: Whether to persist generated images outside the temp dir.
+            persist_dir: Plugin data directory used when persistence is enabled.
+            limit: Maximum number of persisted images to keep; ``0`` means
+                unlimited.
+        """
+        self._persist_enabled = bool(enabled and persist_dir)
+        self._persist_limit = max(0, int(limit or 0))
+        if self._persist_enabled:
+            self._persist_dir = os.path.realpath(str(persist_dir))
+            os.makedirs(self._persist_dir, exist_ok=True)
+            self._allowed_local_base_dirs = self._normalize_allowed_base_dirs(
+                (*self._allowed_local_base_dirs, self._persist_dir)
+            )
+            self._prune_persisted_images()
+        else:
+            self._persist_dir = ""
+        self._generated_dir = self._persist_dir or self._temp_dir
+
+    def _prune_persisted_images(self) -> None:
+        """Delete the oldest persisted images beyond the configured limit."""
+        if not self._persist_enabled or self._persist_limit <= 0:
+            return
+        try:
+            entries = [
+                entry
+                for entry in os.scandir(self._persist_dir)
+                if entry.is_file() and entry.name.startswith("gen_")
+            ]
+        except OSError as exc:
+            logger.warning(f"{LOG} 读取持久化图片目录失败: {safe_log_error_body(exc)}")
+            return
+        if len(entries) <= self._persist_limit:
+            return
+        entries.sort(key=lambda entry: entry.stat().st_mtime)
+        for entry in entries[: len(entries) - self._persist_limit]:
+            try:
+                os.remove(entry.path)
+            except OSError as exc:
+                logger.warning(f"{LOG} 清理持久化图片失败: {safe_log_error_body(exc)}")
 
     def update_settings(self, max_image_size_mb: int | None = None) -> None:
         """Update runtime image processing settings."""
@@ -580,15 +634,30 @@ class ImageProcessor:
         return images_data
 
     def save_generated_image(self, task_id: str, img_bytes: bytes) -> str | None:
-        """Save generated image bytes to the temporary directory."""
+        """Save generated image bytes to the configured output directory."""
         try:
             mime = self._detect_mime_type(img_bytes)
             extension = GENERATED_IMAGE_EXTENSIONS.get(mime, ".png")
             file_name = f"gen_{task_id}_{int(time.time())}_{hashlib.md5(img_bytes).hexdigest()[:6]}{extension}"
-            file_path = os.path.join(self._temp_dir, file_name)
-            os.makedirs(self._temp_dir, exist_ok=True)
-            with open(file_path, "wb") as f:
-                f.write(img_bytes)
+            target_dir = self._generated_dir
+            try:
+                os.makedirs(target_dir, exist_ok=True)
+                file_path = os.path.join(target_dir, file_name)
+                with open(file_path, "wb") as f:
+                    f.write(img_bytes)
+            except OSError as exc:
+                if target_dir == self._temp_dir:
+                    raise
+                logger.warning(
+                    f"{LOG} 持久化目录不可写，回退到临时目录: {safe_log_error_body(exc)}"
+                )
+                target_dir = self._temp_dir
+                os.makedirs(target_dir, exist_ok=True)
+                file_path = os.path.join(target_dir, file_name)
+                with open(file_path, "wb") as f:
+                    f.write(img_bytes)
+            if target_dir == self._persist_dir:
+                self._prune_persisted_images()
             return file_path
         except Exception as exc:
             logger.error(

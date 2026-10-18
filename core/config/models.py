@@ -23,6 +23,8 @@ from ..shared.constants import (
     DEFAULT_MAX_RUNNING_GENERATION_TASKS,
     DEFAULT_NON_RETRYABLE_ERROR_KEYWORDS,
     DEFAULT_NON_RETRYABLE_STATUS_CODES,
+    DEFAULT_PERSIST_GENERATED_IMAGES,
+    DEFAULT_PERSISTED_IMAGE_LIMIT,
     DEFAULT_PROMPT_AUDIT_PROMPT,
     DEFAULT_RATE_LIMIT_SECONDS,
     DEFAULT_RESOLUTION,
@@ -62,6 +64,8 @@ class GenerationSettings:
     generation_task_history_retention_days: int = (
         DEFAULT_GENERATION_TASK_HISTORY_RETENTION_DAYS
     )
+    persist_generated_images: bool = DEFAULT_PERSIST_GENERATED_IMAGES
+    persisted_image_limit: int = DEFAULT_PERSISTED_IMAGE_LIMIT
     debug_request_logging: bool = False
     show_user_error_details: bool = False
     non_retryable_status_codes: list[int] = field(

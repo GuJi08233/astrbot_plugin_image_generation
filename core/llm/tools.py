@@ -33,7 +33,6 @@ from ..generation.reference_collector import (
 from ..generation.reference_collector import (
     normalize_string_items as _normalize_string_items,
 )
-from ..shared.constants import SUPPORTED_ASPECT_RATIOS, SUPPORTED_RESOLUTIONS
 from ..shared.logging import (
     log_prefix,
     mask_sensitive,
@@ -44,6 +43,8 @@ from ..shared.types import ImageCapability, ImageData
 from ..tasks.ids import new_task_id
 from ..tasks.models import GenerationTaskCreationError
 from .preset_text import (
+    ASPECT_RATIO_OPTIONS,
+    RESOLUTION_OPTIONS,
     _format_persona_detail,
     _format_preset_detail,
     _validate_preset_content,
@@ -52,8 +53,6 @@ from .preset_text import (
     normalize_task_action,
 )
 
-ASPECT_RATIO_OPTIONS = list(SUPPORTED_ASPECT_RATIOS)
-RESOLUTION_OPTIONS = list(SUPPORTED_RESOLUTIONS)
 LOG = log_prefix("LLMTool")
 
 
@@ -752,7 +751,7 @@ class DeliverySendMessageToUserTool(SendMessageToUserTool):
         if not isinstance(messages, list):
             messages = []
         image_paths = [
-            str(item["path"] or item["url"])
+            str(item.get("path") or item.get("url"))
             for item in messages
             if isinstance(item, dict)
             and (item.get("path") or item.get("url"))

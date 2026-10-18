@@ -4,7 +4,6 @@ import asyncio
 import functools
 import inspect
 from collections.abc import Callable, Coroutine
-from datetime import datetime
 from typing import Any
 
 from astrbot.api import logger
@@ -61,138 +60,6 @@ class BackgroundTaskMixin:
                 exc_info=(type(exc), exc, exc.__traceback__),
             )
 
-
-class TaskSchedulerMixin:
-    """Mixin for startup, daily, and shutdown task management."""
-
-    def register_startup_task(
-        self,
-        name: str,
-        coro_func: Callable[[], Coroutine[Any, Any, Any]],
-    ) -> None:
-        """Register a task to run during startup.
-
-        Args:
-            name: Task name used for logs.
-            coro_func: Function that returns the task coroutine.
-        """
-        self._startup_tasks.append((name, coro_func))
-        logger.debug(f"{LOG} 已注册启动任务: {_task_name(name)}")
-
-    async def run_startup_tasks(self) -> None:
-        """Run all registered startup tasks.
-
-        This should be called once after plugin initialization is complete.
-        """
-        if self._startup_completed:
-            logger.warning(f"{LOG} 启动任务已执行过，跳过重复执行")
-            return
-
-        if not self._startup_tasks:
-            self._startup_completed = True
-            return
-
-        logger.debug(f"{LOG} 开始执行 {len(self._startup_tasks)} 个启动任务")
-
-        for name, coro_func in self._startup_tasks:
-            log_name = _task_name(name)
-            try:
-                logger.debug(f"{LOG} 执行启动任务: {log_name}")
-                await coro_func()
-                logger.debug(f"{LOG} 启动任务 {log_name} 执行完成")
-            except Exception as e:
-                logger.error(
-                    f"{LOG} 启动任务 {log_name} 执行失败: {e}",
-                    exc_info=True,
-                )
-
-        self._startup_completed = True
-
-    def start_daily_task(
-        self,
-        name: str,
-        coro_func: Callable[[], Coroutine[Any, Any, Any]],
-        check_interval_seconds: float = 60.0,
-        run_immediately: bool = False,
-    ) -> None:
-        """Start a daily task that runs when the date changes.
-
-        Args:
-            name: Unique task name used for tracking and logs.
-            coro_func: Function that returns the task coroutine.
-            check_interval_seconds: Date-change check interval in seconds.
-            run_immediately: Whether to run once immediately regardless of date.
-        """
-        if name in self._daily_tasks:
-            self.stop_daily_task(name)
-
-        log_name = _task_name(name)
-
-        async def _daily_loop():
-            # Initialize the last run date.
-            if run_immediately:
-                try:
-                    await coro_func()
-                    self._last_run_dates[name] = datetime.now().strftime("%Y-%m-%d")
-                    logger.debug(f"{LOG} 每日任务 {log_name} 初始执行完成")
-                except Exception as e:
-                    logger.error(
-                        f"{LOG} 每日任务 {log_name} 初始执行失败: {e}",
-                        exc_info=True,
-                    )
-            else:
-                # Store today's date to avoid duplicate runs on startup day.
-                self._last_run_dates[name] = datetime.now().strftime("%Y-%m-%d")
-
-            while True:
-                try:
-                    await asyncio.sleep(check_interval_seconds)
-                    current_date = datetime.now().strftime("%Y-%m-%d")
-                    last_run_date = self._last_run_dates.get(name)
-
-                    if current_date != last_run_date:
-                        logger.info(
-                            f"{LOG} 检测到日期变更 ({last_run_date} -> {current_date})，执行每日任务 {log_name}"
-                        )
-                        try:
-                            await coro_func()
-                            self._last_run_dates[name] = current_date
-                            logger.info(f"{LOG} 每日任务 {log_name} 执行完成")
-                        except Exception as e:
-                            logger.error(
-                                f"{LOG} 每日任务 {log_name} 执行出错: {e}",
-                                exc_info=True,
-                            )
-                except asyncio.CancelledError:
-                    break
-                except Exception as e:
-                    logger.error(
-                        f"{LOG} 每日任务 {log_name} 循环出错: {e}",
-                        exc_info=True,
-                    )
-
-        task = asyncio.create_task(_daily_loop(), name=f"daily_{name}")
-        self._daily_tasks[name] = task
-        self.background_tasks.add(task)
-        task.add_done_callback(functools.partial(self._on_daily_task_done, name))
-        logger.debug(
-            f"{LOG} 每日任务 {log_name} 已启动 (检查间隔: {check_interval_seconds}s)"
-        )
-
-    def stop_daily_task(self, name: str) -> None:
-        """Stop one daily task."""
-        if task := self._daily_tasks.pop(name, None):
-            if not task.done():
-                task.cancel()
-            self._last_run_dates.pop(name, None)
-            logger.debug(f"{LOG} 每日任务 {_task_name(name)} 已停止")
-
-    def _on_daily_task_done(self, name: str, task: asyncio.Task) -> None:
-        """Handle daily task completion."""
-        self.background_tasks.discard(task)
-        self._daily_tasks.pop(name, None)
-        self._last_run_dates.pop(name, None)
-
     async def cancel_all(self):
         """Cancel all running tasks."""
         self._accepting_generation_tasks = False
@@ -248,8 +115,6 @@ class TaskSchedulerMixin:
             await asyncio.gather(*self.background_tasks, return_exceptions=True)
 
         self.background_tasks.clear()
-        self._daily_tasks.clear()
-        self._last_run_dates.clear()
         self._generation_workers.clear()
         self._running_generation_tasks.clear()
         self._generation_terminal_notifying.clear()
@@ -399,6 +264,18 @@ class GenerationQueueRunnerMixin:
         )
         try:
             await task
+        except asyncio.CancelledError:
+            if self._generation_shutdown or record.status not in {
+                GenerationTaskStatus.CANCELLING,
+                GenerationTaskStatus.CANCELLED,
+            }:
+                raise
+            # The inner task was cancelled by the user. Keep this worker alive
+            # so later queued tasks are still processed.
+            logger.debug(
+                f"{log_prefix('Task', queue_item.task_id)} "
+                "生图任务已取消，worker 继续处理后续任务"
+            )
         finally:
             if record.task is task:
                 record.task = None

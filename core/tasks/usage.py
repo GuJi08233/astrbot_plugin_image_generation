@@ -46,7 +46,24 @@ class UsageManager:
         if self._usage_file.exists():
             try:
                 with self._usage_file.open(encoding="utf-8") as f:
-                    self._usage_data = json.load(f)
+                    loaded = json.load(f)
+                if not isinstance(loaded, dict):
+                    raise ValueError("usage data must be a JSON object")
+
+                # Normalize persisted values so malformed entries cannot break
+                # quota arithmetic later.
+                normalized: dict[str, dict[str, int]] = {}
+                for date_key, counts in loaded.items():
+                    if not isinstance(counts, dict):
+                        continue
+                    normalized_counts: dict[str, int] = {}
+                    for user_key, count in counts.items():
+                        try:
+                            normalized_counts[str(user_key)] = int(count)
+                        except (TypeError, ValueError):
+                            continue
+                    normalized[str(date_key)] = normalized_counts
+                self._usage_data = normalized
 
                 # Keep only recent usage data according to the retention policy.
                 today = datetime.date.today()

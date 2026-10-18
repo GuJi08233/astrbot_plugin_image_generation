@@ -359,10 +359,6 @@ class BaseImageAdapter(abc.ABC):
                 f"{self._get_log_prefix()} 轮换 API Key -> 索引 {self.current_key_index}"
             )
 
-    def update_model(self, model: str) -> None:
-        """Update the active model."""
-        self.model = model
-
     async def generate(self, request: GenerationRequest) -> GenerationResult:
         """Run the image generation template method with retry logic.
 

@@ -38,6 +38,8 @@ from ..shared.constants import (
     DEFAULT_MAX_RUNNING_GENERATION_TASKS,
     DEFAULT_NON_RETRYABLE_ERROR_KEYWORDS,
     DEFAULT_NON_RETRYABLE_STATUS_CODES,
+    DEFAULT_PERSIST_GENERATED_IMAGES,
+    DEFAULT_PERSISTED_IMAGE_LIMIT,
     DEFAULT_RATE_LIMIT_SECONDS,
     DEFAULT_RESOLUTION,
     DEFAULT_RESULT_INFO_ITEMS,
@@ -54,7 +56,7 @@ from ..shared.constants import (
     RESULT_INFO_USAGE,
 )
 from ..shared.logging import log_prefix, safe_log_text
-from ..shared.types import AdapterConfig, AdapterType
+from ..shared.types import AdapterConfig
 
 __all__ = (
     "ConfigManager",
@@ -246,6 +248,17 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
                 fallback_history_cfg,
                 "generation_task_history_retention_days",
                 DEFAULT_GENERATION_TASK_HISTORY_RETENTION_DAYS,
+                min_value=0,
+            ),
+            persist_generated_images=self._get_bool(
+                fallback_history_cfg,
+                "persist_generated_images",
+                DEFAULT_PERSIST_GENERATED_IMAGES,
+            ),
+            persisted_image_limit=self._get_int(
+                fallback_history_cfg,
+                "persisted_image_limit",
+                DEFAULT_PERSISTED_IMAGE_LIMIT,
                 min_value=0,
             ),
             debug_request_logging=self._get_bool(
@@ -570,6 +583,16 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
         return self._plugin_config.generation_settings.generation_task_history_retention_days
 
     @property
+    def persist_generated_images(self) -> bool:
+        """Return whether generated images are persisted in the plugin data dir."""
+        return self._plugin_config.generation_settings.persist_generated_images
+
+    @property
+    def persisted_image_limit(self) -> int:
+        """Return the persisted image count limit; 0 means unlimited."""
+        return self._plugin_config.generation_settings.persisted_image_limit
+
+    @property
     def result_info_items(self) -> set[str]:
         """Return result metadata items shown after successful generation."""
         return self._plugin_config.generation_settings.result_info_items
@@ -597,18 +620,3 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
     def safety_audit_settings(self) -> SafetyAuditSettings:
         """Return safety audit settings."""
         return self._plugin_config.safety_audit_settings
-
-    # Provider lookup helpers.
-    def get_provider_config(self, adapter_type: AdapterType) -> AdapterConfig | None:
-        """Return provider configuration for one adapter type.
-
-        Args:
-            adapter_type: Adapter type to look up.
-
-        Returns:
-            Matching provider config, or None when unavailable.
-        """
-        for cfg in self._all_provider_configs:
-            if cfg.type == adapter_type:
-                return cfg
-        return None

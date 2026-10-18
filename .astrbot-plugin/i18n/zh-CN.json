@@ -22,7 +22,8 @@
         "failed": "失败",
         "cancelling": "取消中",
         "cancelled": "已取消",
-        "pending": "等待中"
+        "pending": "等待中",
+      "notReady": "未初始化"
       },
       "form": {
         "eyebrow": "Create",
@@ -135,6 +136,10 @@
         "modelMeta": "模型 {models}",
         "modelSuccessRate": "成功率 {rate}%",
         "noData": "暂无统计数据",
+      "rangeCaption": "{range} · 共 {total} 个任务",
+      "trendCaption": "{granularity} · 区间内 {total} 个任务",
+      "granularityHour": "按小时",
+      "granularityDay": "按天",
         "avgDuration": "平均耗时 {duration}"
       },
       "gallery": {

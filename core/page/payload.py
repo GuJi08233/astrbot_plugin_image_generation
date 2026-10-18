@@ -158,6 +158,7 @@ class PagePayloadMixin:
         path = Path(record.result_paths[index - 1]).resolve()
         allowed_roots = [
             self.plugin.image_temp_dir.resolve(),
+            self.plugin.persisted_image_dir.resolve(),
             self.plugin.astrbot_temp_dir.resolve(),
         ]
         for root in allowed_roots:
