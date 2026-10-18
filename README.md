@@ -9,7 +9,7 @@
 - **多供应商与多适配器**：内置 Gemini、OpenAI Chat/Images、火山方舟、Gitee AI、硅基流动、Agnes AI、Grok、Codex Responses、ModelScope、自定义 HTTP 和 ComfyUI 工作流；每个供应商可独立配置接口、代理、密钥、模型和能力，多个 Key 自动轮询。
 - **文生图与图生图**：自动收集当前消息、引用消息、@ 用户头像和人设参考图；模型不支持图生图时自动忽略参考图。
 - **引用/转发取词**：引用消息或合并转发卡片会取第一层文字并入提示词（最多 1000 字符），不取其中的图片。
-- **任务体系**：支持多图生成、请求级并发、任务级队列和分批发送；可查看/取消任务，历史可持久化。
+- **任务体系**：支持多图生成、请求级并发、任务级队列和分批发送；可查看/取消任务，任务历史与生成图片均可持久化。
 - **LLM 工具**：`generate_image`、`query_image_presets`、`manage_image_tasks`，可选启用 `edit_image_presets`。
 - **预设与人设**：支持普通预设、JSON 高级预设、多人设拼接、人设参考图，可选正文名称匹配。
 - **限制与审核**：会话黑名单、管理员/白名单绕过、频率限制、每日额度、参考图大小限制；支持屏蔽词与 AI 提示词/图片审核。
@@ -71,3 +71,17 @@
 ## 开发
 
 PR 请提交到 `dev` 分支，不要直接提交到主分支。
+
+### 页面构建
+
+WebUI 页面使用 Vue 3 + Vuetify 3，源码位于 `frontend/`，构建产物位于 `pages/dashboard/`。
+
+修改 `frontend/` 后必须重新构建并提交产物，插件安装流程不会执行构建：
+
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+页面运行在 sandbox iframe 中，所有请求都必须经 `window.AstrBotPluginView`（见 `frontend/src/bridge.js`）；主题色从 `frontend/src/theme/index.js` 复制自 AstrBot 主站，主站主题变更后需要同步。图标使用 `@mdi/js`，模板中必须写成 `$alias` 形式（如 `icon="$refresh"`），可用别名见 `frontend/src/theme/index.js`。

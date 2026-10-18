@@ -88,6 +88,12 @@ DEFAULT_GENERATION_TASK_HISTORY_LIMIT = 1000
 DEFAULT_GENERATION_TASK_HISTORY_RETENTION_DAYS = 0
 """Default generation task history retention days; 0 disables age cleanup."""
 
+DEFAULT_PERSIST_GENERATED_IMAGES = True
+"""Default setting for persisting generated images in the plugin data directory."""
+
+DEFAULT_PERSISTED_IMAGE_LIMIT = 0
+"""Default persisted image count limit; 0 keeps every persisted image."""
+
 DEFAULT_GENERATION_IMAGE_COUNT = 1
 """Default image count per generation request."""
 

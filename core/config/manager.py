@@ -38,6 +38,8 @@ from ..shared.constants import (
     DEFAULT_MAX_RUNNING_GENERATION_TASKS,
     DEFAULT_NON_RETRYABLE_ERROR_KEYWORDS,
     DEFAULT_NON_RETRYABLE_STATUS_CODES,
+    DEFAULT_PERSIST_GENERATED_IMAGES,
+    DEFAULT_PERSISTED_IMAGE_LIMIT,
     DEFAULT_RATE_LIMIT_SECONDS,
     DEFAULT_RESOLUTION,
     DEFAULT_RESULT_INFO_ITEMS,
@@ -246,6 +248,17 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
                 fallback_history_cfg,
                 "generation_task_history_retention_days",
                 DEFAULT_GENERATION_TASK_HISTORY_RETENTION_DAYS,
+                min_value=0,
+            ),
+            persist_generated_images=self._get_bool(
+                fallback_history_cfg,
+                "persist_generated_images",
+                DEFAULT_PERSIST_GENERATED_IMAGES,
+            ),
+            persisted_image_limit=self._get_int(
+                fallback_history_cfg,
+                "persisted_image_limit",
+                DEFAULT_PERSISTED_IMAGE_LIMIT,
                 min_value=0,
             ),
             debug_request_logging=self._get_bool(
@@ -568,6 +581,16 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
     def generation_task_history_retention_days(self) -> int:
         """Return generation task history retention days."""
         return self._plugin_config.generation_settings.generation_task_history_retention_days
+
+    @property
+    def persist_generated_images(self) -> bool:
+        """Return whether generated images are persisted in the plugin data dir."""
+        return self._plugin_config.generation_settings.persist_generated_images
+
+    @property
+    def persisted_image_limit(self) -> int:
+        """Return the persisted image count limit; 0 means unlimited."""
+        return self._plugin_config.generation_settings.persisted_image_limit
 
     @property
     def result_info_items(self) -> set[str]:

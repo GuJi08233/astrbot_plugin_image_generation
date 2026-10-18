@@ -22,7 +22,8 @@
         "failed": "Failed",
         "cancelling": "Cancelling",
         "cancelled": "Cancelled",
-        "pending": "Pending"
+        "pending": "Pending",
+      "notReady": "Not initialized"
       },
       "form": {
         "eyebrow": "Create",
@@ -135,6 +136,10 @@
         "modelMeta": "{models} models",
         "modelSuccessRate": "Success {rate}%",
         "noData": "No statistics yet",
+      "rangeCaption": "{range} · {total} tasks",
+      "trendCaption": "{granularity} · {total} tasks in range",
+      "granularityHour": "Hourly",
+      "granularityDay": "Daily",
         "avgDuration": "Avg duration {duration}"
       },
       "gallery": {
@@ -1054,6 +1059,14 @@
       "generation_task_history_retention_days": {
         "description": "Generation task history retention days",
         "hint": "Completed tasks older than this number of days are cleaned up. Set to 0 to disable time-based cleanup and use only the count limit."
+      },
+      "persist_generated_images": {
+        "description": "Persist generated images",
+        "hint": "When enabled, generated images are saved in the plugin data directory (generated_images) and survive AstrBot temp cleanup. When disabled, images stay in the AstrBot temp directory."
+      },
+      "persisted_image_limit": {
+        "description": "Persisted image limit",
+        "hint": "Maximum number of persisted images to keep. The oldest images are removed first. Set to 0 for no limit."
       }
     }
   }
