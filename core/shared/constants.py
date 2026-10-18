@@ -312,7 +312,7 @@ SUPPORTED_ASPECT_RATIOS = (
 
 # Supported resolutions.
 
-SUPPORTED_RESOLUTIONS = (UNSPECIFIED_OPTION, "1K", "2K", "4K")
+SUPPORTED_RESOLUTIONS = (UNSPECIFIED_OPTION, "1K", "1.5K", "2K", "4K")
 """Resolutions supported by tool parameters."""
 
 

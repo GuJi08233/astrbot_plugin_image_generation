@@ -43,7 +43,7 @@
 | `gemini`              | Gemini 原生 `generateContent`                                  |   ✅    |   ✅    |    ✅     | Gemini 原生图像生成接口。                                                                       |
 | `openai_chat`         | OpenAI 兼容 `chat/completions`                                 |   ✅    |   ✅    |    ❌     | 通用 Chat Completions 图像生成接口，可配置提示词前缀、输出模态和额外请求体。                    |
 | `openai`              | OpenAI Images API `/v1/images/generations`、`/v1/images/edits` |   ✅    |   ✅    |    ✅     | DALL-E / GPT Image 系列；图生图仅 GPT Image 系列支持。                                          |
-| `volcengine_ark`      | 火山方舟 Images Generations `/api/v3/images/generations`       |   ✅    |   ✅    |    ✅     | Seedream 系列；按模型能力发送水印、提示词优化、组图与联网搜索（5.0 Pro 自动跳过不支持参数）。   |
+| `volcengine_ark`      | 火山方舟 Images Generations `/api/v3`、Agent Plan `/api/plan/v3` |   ✅    |   ✅    |    ✅     | Seedream 5.0 Pro / Flash；支持标准 API 与 Agent Plan 接口切换，以及水印、输出格式和提示词优化。 |
 | `gitee_ai`            | Gitee AI `/v1/images/generations`、`/v1/images/edits`          |   ✅    |   ✅    |    ✅     | Gitee AI 通用图像接口，可自动或手动选择生成/编辑接口。                                          |
 | `siliconflow_adapter` | SiliconFlow Images API `/v1/images/generations`                |   ✅    |   ✅    |    ✅     | 支持 Kolors、Qwen-Image、Qwen-Image-Edit、Z-Image，并可配置反向提示词、步数和提示词遵循强度。   |
 | `agnes_ai`            | Agnes AI Images API `/v1/images/generations`                   |   ✅    |   ✅    |    ✅     | 支持 `agnes-image-2.0-flash` 和 `agnes-image-2.1-flash`；参考图通过 `extra_body.image` 数组发送。 |
@@ -82,7 +82,7 @@
 
 - `openai_chat`：可配置提示词前缀、`modalities` 和额外请求体 JSON。
 - `openai`：可选择模型系列，`auto` 会按模型名识别 GPT Image 或 DALL-E 请求格式；文生图默认可使用 SSE，不支持流式的兼容站点可关闭该开关。GPT Image 可选择 png/jpeg/webp 输出格式，默认 png。
-- `volcengine_ark`：可配置水印、组图模式、最大参考图数量、提示词优化模式和联网搜索；Seedream 5.0 Pro 会自动跳过组图与联网搜索参数，并将参考图上限限制为 10。
+- `volcengine_ark`：仅适配 Seedream 5.0 Pro / Flash，支持标准 API 与 Agent Plan 切换；Agent Plan 需专属 API Key 和套餐模型（默认列表含 `doubao-seedream-5.0-pro`）。分辨率支持 1K/1.5K/2K，参考图数量不额外限制；Flash 的 `fast` 按 standard 发送。
 - `gitee_ai`：可通过图像接口模式自动或手动选择 `generations` / `edits`。
 - `siliconflow_adapter`：可配置反向提示词、推理步数和提示词遵循强度。
 - `agnes_ai`：可选择 `base64` 或 `url` 响应格式；图生图参考图通过 `extra_body.image` 数组发送。
@@ -99,7 +99,7 @@
 | 单次最大出图数量     | 10                   | 单个生图任务最多生成的图片数量；用户请求超过该值时会自动截断。                                  |
 | 单条消息最多图片数   | 5                    | 多张图片发送给用户时，每条消息最多携带的图片数量；结果信息附加在最后一批。                      |
 | 默认图片宽高比       | 不指定               | 可选不指定、1:1、2:3、3:2、3:4、4:3、4:5、5:4、9:16、16:9、21:9；不指定时请求中不携带比例字段。 |
-| 默认分辨率           | 不指定               | 可选不指定、1K、2K、4K；不指定时请求中不携带分辨率字段，仅部分适配器支持。                      |
+| 默认分辨率           | 不指定               | 可选不指定、1K、1.5K、2K、4K；不指定时请求中不携带分辨率字段，仅部分适配器支持。                |
 | 显示结果信息         | 用量                 | 发送图片后可附加耗时、模型、生成数量、用量和任务ID；用量仅在开启每日额度时显示。                |
 | 开始生图任务提示模板 | 已开始生图任务       | 生图开始时发送的提示文本；留空则不发送，默认包含任务 ID。                                       |
 
@@ -243,7 +243,7 @@ LLM 生图工具支持 `preset`、`persona`、`aspect_ratio`、`resolution`、`i
 
 `/生图` 会提取“比例、宽高比、画幅、分辨率”附近明确写出的参数，兼容中文冒号、空格和 `k/K` 大小写，也支持末尾连续、独立的比例与分辨率简写（顺序不限）。数量仍放在最后，例如 `16:9 2K 3` 表示比例 `16:9`、分辨率 `2K`、生成数量 `3`；`16 : 9` 的末尾 `9` 不会被当成数量。正文中没有关键词的孤立数字和尺寸不参与提取，例如“猫在 16:9 屏幕前”。“高分辨率2K”“大画幅16:9”等粘连词会留在提示词中；末尾无法识别的简写（如 `8K`）也不当参数。
 
-- 比例支持：`1:1`、`2:3`、`3:2`、`3:4`、`4:3`、`4:5`、`5:4`、`9:16`、`16:9`、`21:9`；分辨率支持：`1K`、`2K`、`4K`。关键词后也可填写“不指定”，表示本次不发送该参数。
+- 比例支持：`1:1`、`2:3`、`3:2`、`3:4`、`4:3`、`4:5`、`5:4`、`9:16`、`16:9`、`21:9`；分辨率支持：`1K`、`1.5K`、`2K`、`4K`。关键词后也可填写“不指定”，表示本次不发送该参数。
 - 每个参数分别遵循“本次明确指定 > 高级预设 > 全局默认值”。只指定比例时，分辨率仍可沿用预设；不会修改全局配置，也不会重新解析预设正文中的尺寸描述。
 - 已识别的参数短语会从提示词中清除；未指定参数时沿用原有行为。值无效时会回复支持的选项，重复相同值允许，不同值冲突时提示修改；这些错误不会提交生图任务或扣除额度。
 - 参数识别仅用于 `/生图`，LLM 工具和插件公共 API 继续使用已有的结构化参数。
@@ -310,7 +310,7 @@ LLM 生图工具支持 `preset`、`persona`、`aspect_ratio`、`resolution`、`i
 
 ## 注意事项
 
-- 火山方舟的可用模型列表需要按控制台实际 Model ID 或 Endpoint ID 配置。
+- 火山方舟仅适配 Seedream 5.0 Pro / Flash；Lite、4.5、4.0 已不再适配（2026-11-24 下线）。使用 Agent Plan 时需切换到 `agent_plan` 模式、填写专属 API Key，并使用套餐模型（默认含 `doubao-seedream-5.0-pro`）。
 - 配置 `jimeng2api` 后，插件会在启动时和每天日期变更后自动领取积分；仅直接连接即梦逆向服务时有效。
 - 即梦逆向图生图使用 `/v1/images/compositions`，使用中转可能会导致图生图失败。
 - OpenAI Images 文生图默认使用 SSE。中转缓冲或截断大型完成事件时可关闭“使用 SSE 流式请求”，并把 GPT Image 输出格式改为 JPEG/WebP 以缩小 Base64 响应。

@@ -323,10 +323,18 @@
         },
         "volcengine_ark": {
           "name": "Volcengine Ark API",
-          "hint": "Calls Volcengine Ark image API /api/v3/images/generations.",
+          "hint": "Calls the Volcengine Ark image API with standard API or Agent Plan.",
           "base_url": {
             "description": "API endpoint",
-            "hint": "Defaults to https://ark.cn-beijing.volces.com. You can also enter a full endpoint that includes /api/v3."
+            "hint": "Defaults to https://ark.cn-beijing.volces.com; the path is completed from the API mode."
+          },
+          "api_mode": {
+            "description": "API mode",
+            "hint": "api uses the standard endpoint. agent_plan uses the Agent Plan endpoint and requires a plan-specific API key and supported model.",
+            "labels": [
+              "Standard API",
+              "Agent Plan"
+            ]
           },
           "proxy": {
             "description": "Proxy URL",
@@ -338,7 +346,7 @@
           },
           "available_models": {
             "description": "Available models",
-            "hint": "Used by the /生图模型 command. Keep this list aligned with actual model IDs or endpoint IDs in the console."
+            "hint": "Used by the /生图模型 command. For Agent Plan, use a model supported by the plan, such as doubao-seedream-5.0-pro."
           },
           "capability_options": {
             "description": "Model capabilities",
@@ -362,34 +370,23 @@
             "description": "Add watermark",
             "hint": "When enabled, add an \"AI generated\" watermark to the bottom-right corner of the image."
           },
-          "sequential_image_generation": {
-            "description": "Image set mode",
-            "hint": "auto allows the model to generate an image set from the prompt. disabled only generates a single image. Seedream 5.0 Pro does not support image sets; this field is omitted for Pro.",
+          "output_format": {
+            "description": "Output format",
+            "hint": "Leave empty to use the API default (jpeg).",
             "labels": [
-              "Disabled",
-              "Auto"
+              "Do not send",
+              "PNG",
+              "JPEG"
             ]
-          },
-          "sequential_max_images": {
-            "description": "Maximum images in image set",
-            "hint": "Only effective when image set mode is auto. The total number of reference images and generated images cannot exceed 15. Seedream 5.0 Pro does not support image sets."
-          },
-          "max_reference_images": {
-            "description": "Maximum reference images",
-            "hint": "Limit the number of reference images used in a single request. Non-Pro models allow up to 14; Seedream 5.0 Pro allows up to 10."
           },
           "optimize_prompt_mode": {
             "description": "Prompt optimization mode",
-            "hint": "standard has higher quality but takes longer. fast is quicker with lower quality. Leave empty to omit this field.",
+            "hint": "standard has higher quality; fast is quicker and only supported by Pro. Flash sends fast as standard. Leave empty to omit the field.",
             "labels": [
               "Do not send",
               "Standard",
               "Fast"
             ]
-          },
-          "enable_web_search": {
-            "description": "Enable web search",
-            "hint": "Supported by Seedream 5.0 lite and similar models. Seedream 5.0 Pro does not support it; the field is omitted for Pro."
           }
         },
         "siliconflow_adapter": {

@@ -220,6 +220,12 @@
           }
         },
         "volcengine_ark": {
+          "api_mode": {
+            "labels": [
+              "标准 API",
+              "Agent Plan"
+            ]
+          },
           "capability_options": {
             "labels": [
               "文生图",
@@ -228,10 +234,11 @@
               "分辨率"
             ]
           },
-          "sequential_image_generation": {
+          "output_format": {
             "labels": [
-              "禁用",
-              "自动"
+              "不发送",
+              "PNG",
+              "JPEG"
             ]
           },
           "optimize_prompt_mode": {

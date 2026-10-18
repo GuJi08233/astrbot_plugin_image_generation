@@ -1,4 +1,12 @@
 ### 更新日志
+- **v1.7.0-2026-10-18**
+  - 火山方舟适配收敛到 Seedream 5.0 Pro / Flash：修复 Flash（`doubao-seedream-5-0-flash-*`）被误判为 5.0 lite、始终下发 `sequential_image_generation` 导致 400 的问题（#72）。
+  - 移除 Lite/4.5/4.0 的模型分支与尺寸映射；默认模型列表调整为 `doubao-seedream-5-0-pro-260628`、`doubao-seedream-5-0-flash-260915` 和 Agent Plan 模型 `doubao-seedream-5.0-pro`。Lite/4.5/4.0 将于 2026-11-24 14:00（UTC+8）下线，Agent Plan 的 Lite 已于 2026-10-12 下线。
+  - 移除组图模式、组图张数、联网搜索和最大参考图数量配置及相关请求代码；两款模型均不支持组图与联网搜索，参考图数量不再由插件限制。
+  - 新增 API / Agent Plan 接口模式切换：标准 API 使用 `/api/v3`，Agent Plan 使用专属 `/api/plan/v3`，并自动规范化已填写的接口地址。
+  - 按官方文档补充 1K/1.5K/2K 分辨率与尺寸映射；新增 `output_format`（png/jpeg）配置；`fast` 提示词优化仅 Pro 支持，Flash 自动按 standard 发送。
+  - 「添加水印」默认关闭，并同步更新相关配置提示。
+
 - **v1.6.11-2026-10-14**
   - 合并 [PR #70](https://github.com/Railgun19457/astrbot_plugin_image_generation/pull/70)（@lingyun14）：引用或转发合并转发卡片时，卡片里第一层消息的文字会作为素材并入提示词。
   - 在此基础上把取用范围扩大到引用的任意文本消息，并统一实现：引用文本与卡片文本同时存在时都会取用，不再只取其一；各来源都带上发送者昵称前缀。

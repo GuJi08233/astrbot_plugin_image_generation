@@ -60,7 +60,7 @@ class Jimeng2APIAdapter(BaseImageAdapter):
                 }
                 if request.aspect_ratio and request.aspect_ratio != UNSPECIFIED_OPTION:
                     payload["ratio"] = request.aspect_ratio
-                if request.resolution and request.resolution != UNSPECIFIED_OPTION:
+                if request.resolution in {"1K", "2K", "4K"}:
                     payload["resolution"] = request.resolution.lower()
                 self._log_request_overview(request, url, payload=payload)
                 self._log_debug_json("请求", payload, request.task_id)
@@ -107,7 +107,7 @@ class Jimeng2APIAdapter(BaseImageAdapter):
                 }
                 if request.aspect_ratio and request.aspect_ratio != UNSPECIFIED_OPTION:
                     payload["ratio"] = request.aspect_ratio
-                if request.resolution and request.resolution != UNSPECIFIED_OPTION:
+                if request.resolution in {"1K", "2K", "4K"}:
                     payload["resolution"] = request.resolution.lower()
                 self._log_request_overview(request, url, payload=payload)
                 self._log_debug_json("请求", payload, request.task_id)

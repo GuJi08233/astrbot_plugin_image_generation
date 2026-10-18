@@ -314,7 +314,7 @@
       },
       "volcengine_ark": {
         "name": "火山方舟接口",
-        "hint": "调用火山方舟图像接口 /api/v3/images/generations。",
+        "hint": "调用火山方舟图像接口，可选择标准 API 或 Agent Plan。",
         "display_item": "name",
         "hide_hint_in_list": true,
         "items": {
@@ -326,9 +326,19 @@
           },
           "base_url": {
             "description": "接口地址",
-            "hint": "默认使用 https://ark.cn-beijing.volces.com；也可填写包含 /api/v3 的完整地址。",
+            "hint": "默认 https://ark.cn-beijing.volces.com；插件会按接口模式自动补全路径。",
             "type": "string",
             "default": "https://ark.cn-beijing.volces.com"
+          },
+          "api_mode": {
+            "description": "接口模式",
+            "hint": "api 为标准 API；agent_plan 为 Agent Plan 专属接口，需专属 API Key 和套餐支持的模型。",
+            "type": "string",
+            "options": [
+              "api",
+              "agent_plan"
+            ],
+            "default": "api"
           },
           "proxy": {
             "description": "代理地址",
@@ -344,13 +354,12 @@
           },
           "available_models": {
             "description": "可用模型列表",
-            "hint": "用于 /生图模型 命令切换；请按控制台实际模型 ID 或 Endpoint ID 维护。Seedream 5.0 Pro 不支持组图与联网搜索，参考图最多 10 张。",
+            "hint": "用于 /生图模型 切换；Agent Plan 请填写套餐支持的模型，如 doubao-seedream-5.0-pro。",
             "type": "list",
             "default": [
               "doubao-seedream-5-0-pro-260628",
-              "doubao-seedream-5-0-260128",
-              "doubao-seedream-4-5-251128",
-              "doubao-seedream-4-0-250828"
+              "doubao-seedream-5-0-flash-260915",
+              "doubao-seedream-5.0-pro"
             ]
           },
           "capability_options": {
@@ -396,43 +405,22 @@
             "description": "添加水印",
             "hint": "开启后在图片右下角添加“AI 生成”水印。",
             "type": "bool",
-            "default": true
+            "default": false
           },
-          "sequential_image_generation": {
-            "description": "组图模式",
-            "hint": "auto 允许模型按提示词生成组图；disabled 仅生成单图。Seedream 5.0 Pro 不支持组图，请求中不会发送该参数。",
+          "output_format": {
+            "description": "输出格式",
+            "hint": "留空由接口默认使用 jpeg。",
             "type": "string",
             "options": [
-              "disabled",
-              "auto"
+              "",
+              "png",
+              "jpeg"
             ],
-            "default": "disabled"
-          },
-          "sequential_max_images": {
-            "description": "组图最大生成张数",
-            "hint": "仅组图模式为 auto 时生效；参考图数量与生成图数量合计不能超过 15。Seedream 5.0 Pro 不支持组图。",
-            "type": "int",
-            "slider": {
-              "min": 1,
-              "max": 15,
-              "step": 1
-            },
-            "default": 15
-          },
-          "max_reference_images": {
-            "description": "最大参考图数量",
-            "hint": "限制单次请求可使用的参考图数量。非 Pro 最高 14 张；Seedream 5.0 Pro 最高 10 张。",
-            "type": "int",
-            "slider": {
-              "min": 1,
-              "max": 14,
-              "step": 1
-            },
-            "default": 14
+            "default": ""
           },
           "optimize_prompt_mode": {
             "description": "提示词优化模式",
-            "hint": "standard 质量更高但耗时较长；fast 更快但质量较低；留空则不发送。",
+            "hint": "standard 质量更高；fast 更快，仅 Pro 支持，Flash 会按 standard 发送；留空不发送。",
             "type": "string",
             "options": [
               "",
@@ -440,12 +428,6 @@
               "fast"
             ],
             "default": ""
-          },
-          "enable_web_search": {
-            "description": "启用联网搜索",
-            "hint": "仅 Seedream 5.0 lite 等支持；Seedream 5.0 Pro 不支持，开启也不会发送。",
-            "type": "bool",
-            "default": false
           }
         }
       },
@@ -1341,6 +1323,7 @@
         "options": [
           "不指定",
           "1K",
+          "1.5K",
           "2K",
           "4K"
         ]

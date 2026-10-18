@@ -25,8 +25,6 @@ SCHEMA_DEFAULT_FACTORIES: dict[str, Any] = {
 MIN_NUMBER_VALUES: dict[str, int | float] = {
     "api_providers.*.timeout": 0,
     "api_providers.*.max_retry_attempts": 0,
-    "api_providers.*.sequential_max_images": 1,
-    "api_providers.*.max_reference_images": 1,
     "api_providers.*.steps": 0,
     "api_providers.*.async_poll_interval": 1,
     "api_providers.*.async_poll_timeout": 1,
