@@ -16,7 +16,6 @@ class AdapterType(str, enum.Enum):
     VOLCENGINE_ARK = "volcengine_ark"
     GITEE_AI = "gitee_ai"
     AGNES_AI = "agnes_ai"
-    JIMENG2API = "jimeng2api"
     GROK = "grok"
     CODEX_RESPONSES = "codex_responses"
     MODELSCOPE = "modelscope"

@@ -532,44 +532,6 @@
             "hint": "Set to 0 to use the retry count from Runtime Control."
           }
         },
-        "jimeng2api": {
-          "name": "Jimeng reverse API",
-          "hint": "Calls jimeng-api image APIs /v1/images/generations and /v1/images/compositions.",
-          "base_url": {
-            "description": "API endpoint",
-            "hint": "Enter the jimeng-api service endpoint."
-          },
-          "proxy": {
-            "description": "Proxy URL",
-            "hint": "Optional. Example: http://127.0.0.1:7890."
-          },
-          "api_keys": {
-            "description": "API keys",
-            "hint": "If the service enables authentication, enter access keys. Multiple keys can be configured for rotation."
-          },
-          "available_models": {
-            "description": "Available models",
-            "hint": "Used by the /生图模型 command. Keep this list aligned with models actually supported by the service."
-          },
-          "capability_options": {
-            "description": "Model capabilities",
-            "hint": "Select the capabilities actually supported by the current model. Unselected capabilities will not be used in requests.",
-            "labels": [
-              "Text to image",
-              "Image to image",
-              "Aspect ratio",
-              "Resolution"
-            ]
-          },
-          "timeout": {
-            "description": "Timeout override (seconds)",
-            "hint": "Set to 0 to use the timeout from Runtime Control."
-          },
-          "max_retry_attempts": {
-            "description": "Retry count override",
-            "hint": "Set to 0 to use the retry count from Runtime Control."
-          }
-        },
         "grok": {
           "name": "Grok (xAI) API",
           "hint": "Calls xAI Images API: /v1/images/generations and /v1/images/edits.",

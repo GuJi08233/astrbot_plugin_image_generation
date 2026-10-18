@@ -6,6 +6,7 @@
   - 新增 API / Agent Plan 接口模式切换：标准 API 使用 `/api/v3`，Agent Plan 使用专属 `/api/plan/v3`，并自动规范化已填写的接口地址。
   - 按官方文档补充 1K/1.5K/2K 分辨率与尺寸映射；新增 `output_format`（png/jpeg）配置；`fast` 提示词优化仅 Pro 支持，Flash 自动按 standard 发送。
   - 「添加水印」默认关闭，并同步更新相关配置提示。
+  - 移除 Jimeng2API 适配器及相关配置、自动领积分任务和文档说明,因为上游项目已停止维护。
 
 - **v1.6.11-2026-10-14**
   - 合并 [PR #70](https://github.com/Railgun19457/astrbot_plugin_image_generation/pull/70)（@lingyun14）：引用或转发合并转发卡片时，卡片里第一层消息的文字会作为素材并入提示词。

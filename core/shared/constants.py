@@ -332,6 +332,3 @@ VOLCENGINE_ARK_DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com"
 
 GITEE_AI_DEFAULT_BASE_URL = "https://ai.gitee.com"
 """Default Gitee AI base URL."""
-
-JIMENG_DEFAULT_BASE_URL = "http://localhost:5100"
-"""Default Jimeng2API base URL."""

@@ -163,9 +163,6 @@ class ImageGenerationPlugin(CommandHandlerMixin, Star):
         # Register LLM tools.
         self._register_llm_tools()
 
-        # Configure scheduled tasks.
-        self._setup_jimeng_token_task()
-
         # Run startup tasks in the background.
         self.task_manager.create_task(self.task_manager.run_startup_tasks())
 
@@ -271,40 +268,6 @@ class ImageGenerationPlugin(CommandHandlerMixin, Star):
             logger.info(
                 f"{LOG} 已注册 LLM 工具: " + ", ".join(tool.name for tool in tools)
             )
-
-    def _setup_jimeng_token_task(self) -> None:
-        """Configure the Jimeng2API automatic credit receiving task.
-
-        The task runs once during plugin startup and then when the date changes.
-
-        It is enabled whenever the config contains a Jimeng2API provider,
-        regardless of the currently active provider.
-        """
-        from .adapter.jimeng2api_adapter import Jimeng2APIAdapter
-        from .core.shared.types import AdapterType
-
-        # Check configured providers instead of the currently active adapter.
-        jimeng_config = self.config_manager.get_provider_config(AdapterType.JIMENG2API)
-        if not jimeng_config:
-            return
-
-        # Create a dedicated Jimeng2API adapter instance for the scheduled task.
-        jimeng_adapter = Jimeng2APIAdapter(jimeng_config)
-
-        # Register as a startup task so it runs once when the plugin starts.
-        self.task_manager.register_startup_task(
-            name="jimeng_token_receive",
-            coro_func=jimeng_adapter.receive_token,
-        )
-
-        # Register as a daily task so it runs when the date changes.
-        self.task_manager.start_daily_task(
-            name="jimeng_token_receive",
-            coro_func=jimeng_adapter.receive_token,
-            check_interval_seconds=300,  # Check date changes every 5 minutes.
-            run_immediately=False,  # Startup task already handles the first run.
-        )
-        logger.info(f"{LOG} 已配置即梦2API自动领积分任务（启动时+每日）")
 
     def _adjust_tool_parameters(self, tool: ImageGenerationTool) -> None:
         """Adjust LLM tool parameters based on adapter capabilities."""

@@ -11,7 +11,7 @@
 ## 功能
 
 - 多供应商配置：一个插件中配置多个生图服务，每个供应商可独立设置 API Key、Base URL、代理、模型列表和模型能力。
-- 多适配器支持：内置 Gemini、OpenAI Chat、OpenAI Images、火山方舟、Gitee AI、硅基流动、Agnes AI、Jimeng2API、Grok 和自定义 HTTP 接口。
+- 多适配器支持：内置 Gemini、OpenAI Chat、OpenAI Images、火山方舟、Gitee AI、硅基流动、Agnes AI、Grok 和自定义 HTTP 接口。
 - 文生图与图生图：自动收集消息图片、引用消息图片、@ 用户头像和人设参考图；LLM 改图时可按需取用当前消息、引用消息或近期聊天中的图片，模型不支持图生图时会自动忽略参考图。
 - 引用与转发文字：发送或引用合并转发卡片、或引用任意文本消息时，其中的文字会作为素材并入提示词，放在自己写的提示词前；只取一层，卡片内再嵌的转发不深入。只取文字，图片不作为参考图。不写提示词时可直接用这些文字生图。
 - 模型动态切换：通过指令查看和切换模型。
@@ -47,7 +47,6 @@
 | `gitee_ai`            | Gitee AI `/v1/images/generations`、`/v1/images/edits`          |   ✅    |   ✅    |    ✅     | Gitee AI 通用图像接口，可自动或手动选择生成/编辑接口。                                          |
 | `siliconflow_adapter` | SiliconFlow Images API `/v1/images/generations`                |   ✅    |   ✅    |    ✅     | 支持 Kolors、Qwen-Image、Qwen-Image-Edit、Z-Image，并可配置反向提示词、步数和提示词遵循强度。   |
 | `agnes_ai`            | Agnes AI Images API `/v1/images/generations`                   |   ✅    |   ✅    |    ✅     | 支持 `agnes-image-2.0-flash` 和 `agnes-image-2.1-flash`；参考图通过 `extra_body.image` 数组发送。 |
-| `jimeng2api`          | jimeng-api `/v1/images/generations`、`/v1/images/compositions` |   ✅    |   ✅    |    ✅     | 适用于 [iptag/jimeng-api](https://github.com/iptag/jimeng-api)，支持启动和每日自动领积分任务。   |
 | `grok`                | xAI Images API `/v1/images/generations`、`/v1/images/edits`    |   ✅    |   ✅    |    ✅     | 按 xAI 官方 JSON 格式请求；单图用 `image`，多图用 `images`（最多 3 张）。                       |
 | `codex_responses`     | Codex / OpenAI Responses API                                   |   ✅    |   ✅    |    ❌     | 固定请求 `model`、`input` 和 `image_generation` 工具；接口路径默认为 `/codex/responses`，可改为 `/v1/responses`。 |
 | `modelscope`          | ModelScope API-Inference `/v1/images/generations` + task poll  |   ✅    | 按配置 | 按配置 | 异步提交、轮询并下载结果；收到远端任务 ID 后不会自动重新提交；详见 [ModelScope 接口配置](docs/modelscope.md)。 |
@@ -311,8 +310,6 @@ LLM 生图工具支持 `preset`、`persona`、`aspect_ratio`、`resolution`、`i
 ## 注意事项
 
 - 火山方舟仅适配 Seedream 5.0 Pro / Flash；Lite、4.5、4.0 已不再适配（2026-11-24 下线）。使用 Agent Plan 时需切换到 `agent_plan` 模式、填写专属 API Key，并使用套餐模型（默认含 `doubao-seedream-5.0-pro`）。
-- 配置 `jimeng2api` 后，插件会在启动时和每天日期变更后自动领取积分；仅直接连接即梦逆向服务时有效。
-- 即梦逆向图生图使用 `/v1/images/compositions`，使用中转可能会导致图生图失败。
 - OpenAI Images 文生图默认使用 SSE。中转缓冲或截断大型完成事件时可关闭“使用 SSE 流式请求”，并把 GPT Image 输出格式改为 JPEG/WebP 以缩小 Base64 响应。
 - Codex Responses 接口支持在单次 HTTP 请求内返回最终图片的文生图和图生图；参考图会作为多模态 `input_image` data URL 发送，但宽高比和分辨率会被忽略。若日志在约 150 秒显示 `Server disconnected`、后续任务仍成功，通常是服务端或中间网络主动断开后触发了插件重试，而不是本插件的请求超时；详见 [Codex Responses 接口配置](docs/codex-responses.md)。
 - 自定义 HTTP 接口为高级功能，建议先阅读 [自定义 HTTP 接口配置](docs/custom-http.md)。
