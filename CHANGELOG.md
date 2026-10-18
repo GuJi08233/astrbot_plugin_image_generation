@@ -1,4 +1,10 @@
 ### 更新日志
+- **v1.7.1-2026-10-18**
+  - OpenAI 适配器收敛到 GPT Image 2 / 2.5：默认模型列表调整为 `gpt-image-2.5-sunburst`、`gpt-image-2.5-flare`、`gpt-image-2`，移除 DALL·E 与 GPT Image 1.x 的请求分支、尺寸映射和 `model_family` 配置。
+  - OpenAI 新增 1K/1.5K/2K/4K 分辨率控制：按分辨率与宽高比组合下发 `size`，文生图和图生图均生效；尺寸满足 OpenAI 对 16 倍数、最长边 3840、总像素 655,360～8,294,400 的限制。
+  - 未指定分辨率时保持原有宽高比预设尺寸；仅指定分辨率时默认按 1:1 出图。
+  - 已有供应商配置如保存过「模型能力」，需重新勾选一次「分辨率」后生效；同步更新 README、配置文档和中英文配置提示。
+
 - **v1.7.0-2026-10-18**
   - 火山方舟适配收敛到 Seedream 5.0 Pro / Flash：修复 Flash（`doubao-seedream-5-0-flash-*`）被误判为 5.0 lite、始终下发 `sequential_image_generation` 导致 400 的问题（#72）。
   - 移除 Lite/4.5/4.0 的模型分支与尺寸映射；默认模型列表调整为 `doubao-seedream-5-0-pro-260628`、`doubao-seedream-5-0-flash-260915` 和 Agent Plan 模型 `doubao-seedream-5.0-pro`。Lite/4.5/4.0 将于 2026-11-24 14:00（UTC+8）下线，Agent Plan 的 Lite 已于 2026-10-12 下线。

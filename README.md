@@ -35,7 +35,7 @@
 | :--- | :--- | :---: | :---: | :---: | :--- |
 | `gemini` | Gemini 原生 `generateContent` | ✅ | ✅ | ✅ | Gemini 原生图像生成接口。 |
 | `openai_chat` | OpenAI 兼容 `chat/completions` | ✅ | ✅ | ❌ | 通用 Chat 生图，可配置提示词前缀、输出模态和额外请求体。 |
-| `openai` | Images `/v1/images/generations`、`/edits` | ✅ | ✅ | ✅ | DALL-E / GPT Image；图生图仅 GPT Image 系列支持。 |
+| `openai` | Images `/v1/images/generations`、`/edits` | ✅ | ✅ | ✅ | GPT Image 2 / 2.5；支持参考图编辑与 1K/1.5K/2K/4K 分辨率。 |
 | `volcengine_ark` | 方舟 `/api/v3`、Agent Plan `/api/plan/v3` | ✅ | ✅ | ✅ | Seedream 5.0 Pro / Flash，支持两种接口模式。 |
 | `gitee_ai` | `/v1/images/generations`、`/edits` | ✅ | ✅ | ✅ | 可自动或手动选择生成/编辑接口。 |
 | `siliconflow_adapter` | SiliconFlow Images API | ✅ | ✅ | ✅ | 支持 Kolors、Qwen-Image 等，可配置反向提示词、步数。 |
@@ -48,7 +48,7 @@
 > 能力以“模型能力”配置为准。未勾选的能力不会在请求中使用，LLM 工具参数也会按当前能力动态隐藏。
 
 ## 文档
-
+> 具体配置细节见如下文件（如在AstrBot打不开，可以到仓库查看）
 - [配置说明](docs/configuration.md)：所有配置项、默认值、占位符与适配器专属参数。
 - [使用说明](docs/usage.md)：尺寸参数识别、引用/转发取词、任务体系。
 - 接口配置：[ModelScope](docs/modelscope.md) · [Codex Responses](docs/codex-responses.md) · [自定义 HTTP](docs/custom-http.md)

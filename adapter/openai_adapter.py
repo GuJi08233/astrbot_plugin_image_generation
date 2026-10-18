@@ -17,21 +17,65 @@ from ..core.shared.types import GenerationRequest, ImageCapability
 
 
 class OpenAIAdapter(BaseImageAdapter):
-    """OpenAI image generation adapter for DALL-E and GPT Image models."""
+    """OpenAI image generation adapter for GPT Image 2 and 2.5 models."""
+
+    # GPT Image 2 / 2.5 size presets. Every edge is a multiple of 16, the
+    # longest edge is at most 3840, and total pixels stay within the
+    # documented 655,360-8,294,400 range.
+    RESOLUTION_SIZE_MAPS: dict[str, dict[str, str]] = {
+        "1K": {
+            "1:1": "1024x1024",
+            "4:3": "1024x768",
+            "3:4": "768x1024",
+            "3:2": "1056x704",
+            "2:3": "704x1056",
+            "5:4": "1040x832",
+            "4:5": "832x1040",
+            "16:9": "1152x640",
+            "9:16": "640x1152",
+            "21:9": "1344x576",
+        },
+        "1.5K": {
+            "1:1": "1536x1536",
+            "4:3": "1536x1152",
+            "3:4": "1152x1536",
+            "3:2": "1536x1024",
+            "2:3": "1024x1536",
+            "5:4": "1520x1216",
+            "4:5": "1216x1520",
+            "16:9": "1536x864",
+            "9:16": "864x1536",
+            "21:9": "1680x720",
+        },
+        "2K": {
+            "1:1": "2048x2048",
+            "4:3": "2048x1536",
+            "3:4": "1536x2048",
+            "3:2": "2064x1376",
+            "2:3": "1376x2064",
+            "5:4": "2080x1664",
+            "4:5": "1664x2080",
+            "16:9": "2048x1152",
+            "9:16": "1152x2048",
+            "21:9": "2352x1008",
+        },
+        "4K": {
+            "1:1": "2880x2880",
+            "4:3": "3264x2448",
+            "3:4": "2448x3264",
+            "3:2": "3504x2336",
+            "2:3": "2336x3504",
+            "5:4": "3200x2560",
+            "4:5": "2560x3200",
+            "16:9": "3840x2160",
+            "9:16": "2160x3840",
+            "21:9": "3696x1584",
+        },
+    }
 
     def get_capabilities(self) -> ImageCapability:
         """Return adapter capabilities."""
         return self._get_configured_capabilities()
-
-    def _is_gpt_image_model(self) -> bool:
-        """Return whether the active model is a GPT Image model."""
-        model_family = self.config.extra.get("model_family", "auto")
-        if model_family == "gpt-image":
-            return True
-        if model_family == "dall-e":
-            return False
-        # auto: infer the family from the model name.
-        return self.model is not None and "gpt-image" in self.model
 
     def _image_filename(self, mime_type: str, index: int) -> str:
         """Return a filename whose extension matches the uploaded image bytes."""
@@ -50,24 +94,8 @@ class OpenAIAdapter(BaseImageAdapter):
     ) -> tuple[list[bytes] | None, str | None]:
         """Execute one image generation request."""
         start_time = time.time()
-        prefix = self._get_log_prefix(request.task_id)
 
-        if request.resolution and request.resolution != UNSPECIFIED_OPTION:
-            self._log_debug_json(
-                "尺寸参数处理",
-                {
-                    "resolution": request.resolution,
-                    "处理": "已忽略：OpenAI Images 不支持插件分辨率参数",
-                },
-                request.task_id,
-            )
-
-        is_gpt = self._is_gpt_image_model()
-        use_edit = bool(request.images) and is_gpt
-        if request.images and not is_gpt:
-            logger.warning(
-                f"{prefix} 提供了参考图但当前模型不支持图生图，仅 GPT Image 系列支持图生图，参考图将被忽略"
-            )
+        use_edit = bool(request.images)
         session = self._get_session()
         base = self.base_url.rstrip("/") if self.base_url else "https://api.openai.com"
         headers = {"Authorization": f"Bearer {self._get_current_api_key()}"}
@@ -75,12 +103,10 @@ class OpenAIAdapter(BaseImageAdapter):
         if use_edit:
             url = f"{base}/v1/images/edits"
             form = aiohttp.FormData()
-            form.add_field("model", self.model or "gpt-image-1")
+            form.add_field("model", self.model or "gpt-image-2")
             form.add_field("prompt", request.prompt)
             form.add_field("n", "1")
-            if size := self._map_aspect_ratio_to_size(
-                request.aspect_ratio, gpt_model=True
-            ):
+            if size := self._map_size(request.aspect_ratio, request.resolution):
                 form.add_field("size", size)
             for index, img in enumerate(request.images, start=1):
                 form.add_field(
@@ -226,64 +252,54 @@ class OpenAIAdapter(BaseImageAdapter):
 
     def _build_payload(self, request: GenerationRequest) -> dict:
         """Build the request payload."""
-        gpt = self._is_gpt_image_model()
         payload: dict[str, Any] = {
-            "model": self.model or "dall-e-3",
+            "model": self.model or "gpt-image-2",
             "prompt": request.prompt,
             "n": 1,
         }
 
-        if size := self._map_aspect_ratio_to_size(request.aspect_ratio, gpt_model=gpt):
+        if size := self._map_size(request.aspect_ratio, request.resolution):
             payload["size"] = size
-        # OpenAI models do not support the plugin resolution setting; quality is separate.
-        if gpt:
-            output_format = str(self.config.extra.get("output_format") or "png").lower()
-            payload["output_format"] = (
-                output_format if output_format in {"png", "jpeg", "webp"} else "png"
-            )
-        else:
-            # Keep DALL-E results self-contained for local persistence.
-            payload["response_format"] = "b64_json"
+        output_format = str(self.config.extra.get("output_format") or "png").lower()
+        payload["output_format"] = (
+            output_format if output_format in {"png", "jpeg", "webp"} else "png"
+        )
 
         return payload
 
-    def _map_aspect_ratio_to_size(
-        self, aspect_ratio: str | None, gpt_model: bool
-    ) -> str | None:
+    def _map_size(self, aspect_ratio: str | None, resolution: str | None) -> str | None:
+        """Map the requested aspect ratio and resolution to an Images API size."""
+        if resolution and resolution != UNSPECIFIED_OPTION:
+            ratio = (
+                aspect_ratio
+                if aspect_ratio and aspect_ratio != UNSPECIFIED_OPTION
+                else "1:1"
+            )
+            size_map = self.RESOLUTION_SIZE_MAPS.get(resolution)
+            if size_map:
+                return size_map.get(ratio, size_map["1:1"])
+
+        return self._map_aspect_ratio_to_size(aspect_ratio)
+
+    def _map_aspect_ratio_to_size(self, aspect_ratio: str | None) -> str | None:
         """Map an aspect ratio to an OpenAI-supported size parameter."""
         if not aspect_ratio or aspect_ratio == UNSPECIFIED_OPTION:
             return None
 
-        if gpt_model:
-            # GPT Image models support only square, landscape, and portrait sizes.
-            # Map unsupported ratios to the closest supported size.
-            mapping = {
-                "1:1": "1024x1024",
-                "3:2": "1536x1024",
-                "16:9": "1536x1024",
-                "4:3": "1536x1024",
-                "5:4": "1536x1024",
-                "21:9": "1536x1024",
-                "2:3": "1024x1536",
-                "3:4": "1024x1536",
-                "9:16": "1024x1536",
-                "4:5": "1024x1536",
-            }
-        else:
-            # DALL-E 3 supports only square, landscape, and portrait sizes.
-            # Map unsupported ratios to the closest supported size.
-            mapping = {
-                "1:1": "1024x1024",
-                "3:2": "1792x1024",
-                "16:9": "1792x1024",
-                "4:3": "1792x1024",
-                "5:4": "1792x1024",
-                "21:9": "1792x1024",
-                "2:3": "1024x1792",
-                "3:4": "1024x1792",
-                "9:16": "1024x1792",
-                "4:5": "1024x1792",
-            }
+        # Map unsupported ratios to the documented preset sizes. Custom
+        # dimensions are not exposed by the plugin for this adapter.
+        mapping = {
+            "1:1": "1024x1024",
+            "3:2": "1536x1024",
+            "16:9": "1536x1024",
+            "4:3": "1536x1024",
+            "5:4": "1536x1024",
+            "21:9": "1536x1024",
+            "2:3": "1024x1536",
+            "3:4": "1024x1536",
+            "9:16": "1024x1536",
+            "4:5": "1024x1536",
+        }
         return mapping.get(aspect_ratio)
 
     async def _extract_images(

@@ -298,22 +298,13 @@
             "description": "Retry count override",
             "hint": "Set to 0 to use the retry count from Runtime Control."
           },
-          "model_family": {
-            "description": "Model family",
-            "hint": "Affects the OpenAI request format. auto detects the gpt-image or dall-e family from the model name.",
-            "labels": [
-              "Auto",
-              "GPT Image",
-              "DALL·E"
-            ]
-          },
           "enable_streaming": {
             "description": "Use SSE streaming",
             "hint": "Enabled by default for text-to-image requests. Disable this for compatible endpoints that do not support SSE and expect a normal JSON response."
           },
           "output_format": {
             "description": "GPT Image output format",
-            "hint": "PNG keeps lossless quality. JPEG produces a smaller response and is useful for relays that truncate large Base64 payloads. Only applies to GPT Image models.",
+            "hint": "PNG keeps lossless quality. JPEG produces a smaller response and is useful for relays that truncate large Base64 payloads.",
             "labels": [
               "png",
               "jpeg",

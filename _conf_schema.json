@@ -237,11 +237,9 @@
             "hint": "用于 /生图模型 命令切换；请按账号实际可用模型维护。",
             "type": "list",
             "default": [
-              "gpt-image-2",
-              "gpt-image-1.5",
-              "gpt-image-1",
-              "gpt-image-1-mini",
-              "dall-e-3"
+              "gpt-image-2.5-sunburst",
+              "gpt-image-2.5-flare",
+              "gpt-image-2"
             ]
           },
           "capability_options": {
@@ -257,7 +255,8 @@
             "default": [
               "文生图",
               "图生图",
-              "宽高比"
+              "宽高比",
+              "分辨率"
             ]
           },
           "timeout": {
@@ -282,17 +281,6 @@
             },
             "default": 0
           },
-          "model_family": {
-            "description": "模型系列",
-            "hint": "影响 OpenAI 请求格式。auto 会按模型名自动识别 gpt-image 或 dall-e 系列。",
-            "type": "string",
-            "options": [
-              "auto",
-              "gpt-image",
-              "dall-e"
-            ],
-            "default": "auto"
-          },
           "enable_streaming": {
             "description": "使用 SSE 流式请求",
             "hint": "文生图默认开启 SSE。部分兼容站点不支持流式时可关闭，改为普通 JSON 响应。",
@@ -301,7 +289,7 @@
           },
           "output_format": {
             "description": "GPT Image 输出格式",
-            "hint": "PNG 保留无损质量；JPEG 响应更小，适合会截断大型 Base64 响应的中转接口。仅影响 GPT Image 系列。",
+            "hint": "PNG 保留无损质量；JPEG 响应更小，适合会截断大型 Base64 响应的中转接口。",
             "type": "string",
             "options": [
               "png",

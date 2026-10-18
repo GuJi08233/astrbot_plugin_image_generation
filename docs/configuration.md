@@ -26,7 +26,7 @@
 常见专属配置：
 
 - `openai_chat`：可配置提示词前缀、`modalities` 和额外请求体 JSON。
-- `openai`：可选择模型系列，`auto` 会按模型名识别 GPT Image 或 DALL-E 请求格式；文生图默认可使用 SSE，不支持流式的兼容站点可关闭该开关。GPT Image 可选择 png/jpeg/webp 输出格式，默认 png。
+- `openai`：使用 GPT Image 2 / 2.5 模型；支持 1K/1.5K/2K/4K 分辨率与宽高比组合。文生图默认可使用 SSE，不支持流式的兼容站点可关闭该开关。可选择 png/jpeg/webp 输出格式，默认 png。
 - `volcengine_ark`：仅适配 Seedream 5.0 Pro / Flash，支持标准 API 与 Agent Plan 切换；Agent Plan 需专属 API Key 和套餐模型（默认列表含 `doubao-seedream-5.0-pro`）。分辨率支持 1K/1.5K/2K，参考图数量不额外限制；Flash 的 `fast` 按 standard 发送。
 - `gitee_ai`：可通过图像接口模式自动或手动选择 `generations` / `edits`。
 - `siliconflow_adapter`：可配置反向提示词、推理步数和提示词遵循强度。

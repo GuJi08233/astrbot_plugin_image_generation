@@ -36,7 +36,6 @@ ADAPTER_EXTRA_DEFAULTS: dict[AdapterType, dict[str, Any]] = {
         "modalities": ["image", "text"],
     },
     AdapterType.OPENAI: {
-        "model_family": "auto",
         "enable_streaming": True,
         "output_format": "png",
     },
