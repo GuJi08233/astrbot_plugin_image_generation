@@ -9,18 +9,18 @@ import ntpath
 import os
 import posixpath
 import re
+import shutil
 import time
 from collections.abc import Iterable
 from io import BytesIO
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlparse
 
-from PIL import Image, UnidentifiedImageError
-
 import astrbot.api.message_components as Comp
 from astrbot.api import logger
 from astrbot.core.utils.astrbot_path import get_astrbot_workspaces_path
 from astrbot.core.utils.io import download_image_by_url
+from PIL import Image, UnidentifiedImageError
 
 from ..shared.logging import (
     log_prefix,
@@ -664,3 +664,50 @@ class ImageProcessor:
                 f"{LOG} 保存图片失败: {safe_log_error_body(exc)}", exc_info=True
             )
             return None
+
+    def ensure_delivery_paths(self, paths: Iterable[str]) -> list[str]:
+        """Return result paths the core send tool is allowed to deliver.
+
+        Core restricts local file sending to the session workspace, the AstrBot
+        temp directory and the system temp directory. Persisted images live in
+        the plugin data directory and are rejected by that check, so a
+        same-named link is created inside the plugin temp directory and handed
+        out for delivery instead.
+
+        Args:
+            paths: Result image paths or URLs recorded by a task.
+
+        Returns:
+            Delivery paths. Persistent local files are replaced by their temp
+            link, other entries are returned unchanged.
+        """
+        temp_root = os.path.normcase(self._temp_dir)
+        delivery_paths: list[str] = []
+        for raw_path in paths:
+            path = str(raw_path or "").strip()
+            if not path:
+                continue
+            local_path = os.path.realpath(path) if os.path.isfile(path) else ""
+            if not local_path or os.path.normcase(local_path).startswith(
+                temp_root + os.sep
+            ):
+                delivery_paths.append(path)
+                continue
+            target = os.path.join(self._temp_dir, os.path.basename(local_path))
+            try:
+                if os.path.exists(target) and not os.path.samefile(target, local_path):
+                    os.remove(target)
+                if not os.path.exists(target):
+                    try:
+                        # A hardlink avoids a second copy on the same volume.
+                        os.link(local_path, target)
+                    except OSError:
+                        shutil.copy2(local_path, target)
+            except OSError as exc:
+                logger.warning(
+                    f"{LOG} 创建投递副本失败，回退为原路径: {safe_log_error_body(exc)}"
+                )
+                delivery_paths.append(path)
+                continue
+            delivery_paths.append(target)
+        return delivery_paths

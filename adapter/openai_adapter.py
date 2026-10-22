@@ -4,10 +4,9 @@ import asyncio
 import base64
 import json
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 import aiohttp
-
 from astrbot.api import logger
 
 from ..core.adapters.base import BaseImageAdapter
@@ -22,7 +21,7 @@ class OpenAIAdapter(BaseImageAdapter):
     # GPT Image 2 / 2.5 size presets. Every edge is a multiple of 16, the
     # longest edge is at most 3840, and total pixels stay within the
     # documented 655,360-8,294,400 range.
-    RESOLUTION_SIZE_MAPS: dict[str, dict[str, str]] = {
+    RESOLUTION_SIZE_MAPS: ClassVar[dict[str, dict[str, str]]] = {
         "1K": {
             "1:1": "1024x1024",
             "4:3": "1024x768",

@@ -304,13 +304,28 @@ def safe_log_summary(
     return safe_log_text(text, limit=limit)
 
 
-def safe_log_error_body(value: object, limit: int = 200) -> str:
+def safe_log_error_body(
+    value: object,
+    limit: int = 200,
+    *,
+    field_limit: int | None = None,
+) -> str:
     """Return a compact provider error body summary for logs.
 
     The plugin keeps provider error bodies readable for administrators, but still
     removes values that are almost always secrets or binary payloads.
+
+    Args:
+        value: Raw provider body or exception text.
+        limit: Maximum length of the final summary.
+        field_limit: Maximum length of one scalar field; defaults to a
+            log-friendly cap and can be widened for user-facing surfaces.
     """
-    return safe_log_summary(value, limit=limit, field_limit=min(120, limit))
+    return safe_log_summary(
+        value,
+        limit=limit,
+        field_limit=field_limit if field_limit is not None else min(120, limit),
+    )
 
 
 def safe_user_error_detail(value: object, limit: int = 600) -> str:

@@ -15,8 +15,8 @@ from ..config.manager import (
     RESULT_INFO_USAGE,
 )
 from ..shared.constants import UNSPECIFIED_OPTION
-from ..tasks.models import GenerationTaskItemStatus, GenerationTaskStatus
 from ..shared.logging import log_prefix, safe_log_text
+from ..tasks.models import GenerationTaskItemStatus, GenerationTaskStatus
 
 if TYPE_CHECKING:
     from ..config.manager import ConfigManager

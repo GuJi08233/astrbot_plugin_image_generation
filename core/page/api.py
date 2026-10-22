@@ -87,6 +87,12 @@ class ImageGenerationPageAPI(PagePayloadMixin, PageStatsMixin):
                 ["POST"],
                 "Submit image generation task from Page",
             ),
+            (
+                "/page/model",
+                self.page_switch_model,
+                ["POST"],
+                "Switch the active image generation model from Page",
+            ),
         ]
         for route, handler, methods, description in page_routes:
             self.plugin.context.register_web_api(
@@ -95,6 +101,21 @@ class ImageGenerationPageAPI(PagePayloadMixin, PageStatsMixin):
                 methods,
                 description,
             )
+
+    def _available_models(self) -> list[str]:
+        """Return every selectable generation model in `provider/model` form.
+
+        Returns:
+            Model choices in the same format the Dashboard Page offers.
+        """
+        models: list[str] = []
+        for provider in getattr(
+            self.plugin.config_manager, "_all_provider_configs", []
+        ):
+            provider_name = provider.name.strip()
+            for model in provider.available_models:
+                models.append(f"{provider_name}/{model}" if provider_name else model)
+        return models
 
     async def page_state(self):
         """Return plugin state used to initialize the Dashboard Page.
@@ -112,19 +133,12 @@ class ImageGenerationPageAPI(PagePayloadMixin, PageStatsMixin):
         current_model = (
             f"{adapter_config.name}/{adapter_config.model}" if adapter_config else ""
         )
-        available_models: list[str] = []
-        for provider in getattr(plugin.config_manager, "_all_provider_configs", []):
-            provider_name = provider.name.strip()
-            for model in provider.available_models:
-                available_models.append(
-                    f"{provider_name}/{model}" if provider_name else model
-                )
         return json_response(
             {
                 "initialized": bool(plugin.generator and plugin.generator.adapter),
                 "has_api_key": plugin.has_required_api_key(),
                 "current_model": current_model,
-                "available_models": available_models,
+                "available_models": self._available_models(),
                 "default_image_count": plugin.config_manager.default_image_count,
                 "max_image_count": plugin.config_manager.max_image_count,
                 "default_aspect_ratio": plugin.config_manager.default_aspect_ratio,
@@ -224,9 +238,10 @@ class ImageGenerationPageAPI(PagePayloadMixin, PageStatsMixin):
             if status_filter == "active":
                 if not record.is_active:
                     continue
-            elif status_filter not in {"", "all"}:
-                if record.status.value != status_filter:
-                    continue
+            elif status_filter not in {"", "all"} and (
+                record.status.value != status_filter
+            ):
+                continue
 
             if source_filter and source_filter not in record_source.lower():
                 continue
@@ -387,6 +402,9 @@ class ImageGenerationPageAPI(PagePayloadMixin, PageStatsMixin):
             return error_response("days 必须是非负整数", status_code=400)
         limit = max(1, min(request.query.get("limit", 60, type=int), 200))
         offset = max(0, request.query.get("offset", 0, type=int))
+        available_only = str(
+            request.query.get("available_only", "") or ""
+        ).strip().lower() not in {"", "0", "false", "no"}
         since = self._parse_page_datetime(request.query.get("since"))
         until = self._parse_page_datetime(request.query.get("until"))
         if days > 0 and since is None:
@@ -432,6 +450,11 @@ class ImageGenerationPageAPI(PagePayloadMixin, PageStatsMixin):
                     continue
             items.extend(self._gallery_items_for_record(record))
 
+        hidden_count = 0
+        if available_only:
+            hidden_count = sum(1 for item in items if not item.get("available"))
+            items = [item for item in items if item.get("available")]
+
         total = len(items)
         page_items = items[offset : offset + limit]
         return json_response(
@@ -441,6 +464,7 @@ class ImageGenerationPageAPI(PagePayloadMixin, PageStatsMixin):
                 "offset": offset,
                 "limit": limit,
                 "available_count": sum(1 for item in items if item.get("available")),
+                "hidden_count": hidden_count,
                 "models": sorted(model_names),
             }
         )
@@ -526,14 +550,7 @@ class ImageGenerationPageAPI(PagePayloadMixin, PageStatsMixin):
             if plugin.config_manager.adapter_config
             else ""
         ):
-            plugin.config_manager.save_model_setting(model)
-            plugin.config_manager.reload()
-            plugin.reload_runtime_settings()
-            if plugin.generator and plugin.config_manager.adapter_config:
-                await plugin.generator.update_adapter(
-                    plugin.config_manager.adapter_config
-                )
-                plugin.generation_executor.update_generator(plugin.generator)
+            await plugin.switch_generation_model(model)
 
         # Page generation runs from Dashboard auth context. Prefer the signed-in
         # WebUI username so overview statistics can attribute tasks correctly.
@@ -567,5 +584,38 @@ class ImageGenerationPageAPI(PagePayloadMixin, PageStatsMixin):
                 "message": result.message,
                 "task_id": result.task_id,
                 "task": self._page_task_payload(record) if record else None,
+            }
+        )
+
+    async def page_switch_model(self):
+        """Switch the active generation model from the Dashboard Page.
+
+        Persists the chosen model and reloads the runtime helpers so later
+        requests use it, without submitting a generation task.
+
+        Returns:
+            A JSON response with the model now in use, or an error response.
+        """
+        plugin = self.plugin
+        payload = await request.json(default={})
+        if not isinstance(payload, dict):
+            return error_response("请求体必须是 JSON 对象", status_code=400)
+        model = str(payload.get("model") or "").strip()
+        if not model:
+            return error_response("缺少 model 参数", status_code=400)
+
+        adapter_config = plugin.config_manager.adapter_config
+        if model not in self._available_models():
+            return error_response(f"未知模型: {model}", status_code=400)
+
+        current_model = (
+            f"{adapter_config.name}/{adapter_config.model}" if adapter_config else ""
+        )
+        if model != current_model:
+            await plugin.switch_generation_model(model)
+        return json_response(
+            {
+                "current_model": model,
+                "switched": model != current_model,
             }
         )

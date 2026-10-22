@@ -22,9 +22,10 @@ from astrbot.core.provider.entities import ProviderRequest
 
 from ..config.manager import ConfigManager
 from ..formatting.result import format_generation_failure_message
-from ..tasks.models import GenerationTaskRecord, GenerationTaskStatus
+from ..generation.image_processor import ImageProcessor
 from ..shared.logging import log_prefix, safe_log_error_body, safe_log_text
 from ..tasks.manager import TaskManager
+from ..tasks.models import GenerationTaskRecord, GenerationTaskStatus
 from .tools import DeliverySendMessageToUserTool
 
 IMAGE_GENERATION_TASK_WOKE_SYSTEM_PROMPT = (
@@ -74,6 +75,7 @@ class LLMResultHandler:
         context: Context,
         config_manager: ConfigManager,
         task_manager: TaskManager,
+        image_processor: ImageProcessor,
         create_background_task: Callable[
             [Coroutine[Any, Any, Any], str | None], asyncio.Task
         ],
@@ -81,6 +83,7 @@ class LLMResultHandler:
         self.context = context
         self.config_manager = config_manager
         self.task_manager = task_manager
+        self.image_processor = image_processor
         self._create_background_task = create_background_task
 
     def attach_task_wakeup(
@@ -178,6 +181,7 @@ class LLMResultHandler:
         record: GenerationTaskRecord,
         *,
         supports_image_input: bool,
+        delivery_paths: list[str],
     ) -> dict[str, Any]:
         """Build structured task result context for the awakened AI."""
         request_stats = record.request_stats
@@ -195,7 +199,7 @@ class LLMResultHandler:
             "preset_label": record.preset_label,
             "preset": record.preset or "",
             "result_count": record.result_count,
-            "result_paths": record.result_paths,
+            "result_paths": delivery_paths,
             "request_stats": request_stats,
             "items": [
                 {
@@ -501,9 +505,13 @@ class LLMResultHandler:
             and "image" in provider.provider_config.get("modalities", [])
             and record.result_paths
         )
+        # 核心发送工具只允许发送会话工作区与 AstrBot 临时目录下的文件，
+        # 持久化目录中的图片需要先映射到临时目录再交给唤醒后的 AI 投递。
+        delivery_paths = self.image_processor.ensure_delivery_paths(record.result_paths)
         payload = self._build_task_result_payload(
             record,
             supports_image_input=supports_image_input,
+            delivery_paths=delivery_paths,
         )
 
         req = ProviderRequest()
@@ -537,9 +545,9 @@ class LLMResultHandler:
             )
         )
         if supports_image_input:
-            req.image_urls = list(record.result_paths)
+            req.image_urls = list(delivery_paths)
         else:
-            for path in record.result_paths:
+            for path in delivery_paths:
                 req.extra_user_content_parts.append(
                     TextPart(text=f"[Generated image path: {path}]")
                 )

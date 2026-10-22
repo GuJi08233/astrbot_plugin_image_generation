@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 from astrbot.api import logger
 
@@ -22,7 +22,7 @@ class VolcengineArkAdapter(BaseImageAdapter):
     DEFAULT_BASE_URL = VOLCENGINE_ARK_DEFAULT_BASE_URL
 
     # Seedream 5.0 Pro / Flash official sample pixel maps (1K / 1.5K / 2K).
-    SIZE_MAPS: dict[str, dict[str, str]] = {
+    SIZE_MAPS: ClassVar[dict[str, dict[str, str]]] = {
         "1K": {
             "1:1": "1024x1024",
             "4:3": "1152x864",
@@ -260,9 +260,12 @@ class VolcengineArkAdapter(BaseImageAdapter):
                 continue
 
             url = item.get("url")
-            if isinstance(url, str) and url:
-                if data := await self._download_image(url, task_id):
-                    images.append(data)
+            if (
+                isinstance(url, str)
+                and url
+                and (data := await self._download_image(url, task_id))
+            ):
+                images.append(data)
 
         if images:
             return images, None

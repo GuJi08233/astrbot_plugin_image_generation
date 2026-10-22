@@ -6,16 +6,13 @@
   },
   "pages": {
     "dashboard": {
-      "eyebrow": "Plugin Page",
       "title": "Universal Image Generation Dashboard",
-      "description": "Submit generation tasks, monitor the queue, and download results inside AstrBot WebUI.",
       "refresh": "Refresh",
       "submit": "Generate",
       "submitting": "Submitting...",
-      "uploading": "Uploading...",
       "status": {
         "model": "Current model",
-        "queue": "Queue",
+        "modelSwitched": "Switched to {model}",
         "queued": "Queued",
         "running": "Running",
         "succeeded": "Succeeded",
@@ -47,7 +44,6 @@
         "resultEmptyTitle": "Results appear here after submit",
         "resultEmptyDescription": "Progress, errors, and generated images stay on this page so you do not need to leave Generate.",
         "resultTitle": "Current generation",
-        "resultCount": "{count} tasks",
         "openTask": "Open in tasks",
         "clearResult": "Dismiss result"
       },
@@ -55,9 +51,6 @@
         "eyebrow": "Queue",
         "title": "Task queue",
         "empty": "No tasks yet",
-        "createdAt": "Created",
-        "progress": "Progress",
-        "results": "Results",
         "keywordPlaceholder": "Task ID / prompt / preset / persona / model / UMO",
         "sourceAll": "All sources",
         "modelAll": "All models",
@@ -76,19 +69,10 @@
         "title": "Task detail",
         "cancel": "Cancel task",
         "download": "Download image",
-        "taskId": "Task ID",
-        "createdAt": "Created at",
-        "startedAt": "Started at",
-        "finishedAt": "Finished at",
         "duration": "Duration",
-        "queued": "Queued",
         "requested": "Requested",
         "references": "References",
-        "preset": "Preset",
-        "persona": "Persona",
         "template": "Template",
-        "none": "None",
-        "message": "Message",
         "error": "Error",
         "items": "Items",
         "results": "Results",
@@ -100,16 +84,15 @@
         "previewUnavailable": "Preview unavailable",
         "previewFailed": "Preview failed",
         "expandPrompt": "Show full prompt",
-        "collapsePrompt": "Collapse prompt"
+        "collapsePrompt": "Collapse prompt",
+        "promptNotStored": "The full prompt was not stored for this record; only the summary is available",
+        "viewError": "View full error",
+        "collapseError": "Collapse error"
       },
       "message": {
-        "stateLoaded": "State refreshed",
         "taskSubmitted": "Task submitted",
         "uploaded": "Reference image uploaded",
-        "cancelled": "Task cancellation requested",
-        "downloadStarted": "Download started",
-        "galleryLoaded": "Gallery refreshed",
-        "statsLoaded": "Statistics refreshed"
+        "cancelled": "Task cancellation requested"
       },
       "error": {
         "generic": "Operation failed"
@@ -149,17 +132,20 @@
         "unavailable": "File cleaned up",
         "keywordPlaceholder": "Task ID / prompt / preset / model",
         "modelAll": "All models",
-        "model": "Model",
         "daysAll": "All time",
         "days1": "Last 1 day",
         "days7": "Last 7 days",
         "days30": "Last 30 days",
         "count": "{total} images, {available} available",
+        "hiddenCount": "{count} cleared hidden",
+        "hideUnavailable": "Hide cleared",
+        "prevPage": "Previous",
+        "nextPage": "Next",
+        "pageInfo": "Page {page} / {pages}",
         "openTask": "Open task"
       },
       "lightbox": {
-        "close": "Close",
-        "open": "View full image"
+        "close": "Close"
       }
     }
   },

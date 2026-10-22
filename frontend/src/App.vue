@@ -5,14 +5,23 @@
         <header class="page-header">
           <div class="page-header__text">
             <h1 class="page-title">{{ t("title", "通用生图控制台") }}</h1>
-            <p class="page-subtitle">
-              {{ t("description", "在 AstrBot WebUI 中提交生图任务、查看队列状态并下载生成结果。") }}
-            </p>
           </div>
 
           <div class="page-header__actions">
+            <v-select
+              v-if="modelOptions.length"
+              v-model="selectedModel"
+              :items="modelOptions"
+              :label="t('status.model', '当前模型')"
+              :disabled="switchingModel"
+              density="compact"
+              variant="outlined"
+              hide-details
+              class="page-model-select"
+              @update:model-value="switchModel"
+            />
             <v-chip
-              v-if="pluginState?.current_model"
+              v-else-if="pluginState?.current_model"
               size="small"
               variant="tonal"
               color="primary"
@@ -91,9 +100,9 @@
 </template>
 
 <script setup>
-import { computed, onMounted, provide, reactive, ref } from "vue";
+import { computed, onMounted, provide, reactive, ref, watch } from "vue";
 import { waitForBridge } from "./bridge";
-import { apiGet } from "./api";
+import { apiGet, apiPost } from "./api";
 import { isDark, syncContext, t } from "./i18n";
 import { THEME_DARK, THEME_LIGHT } from "./theme";
 import OverviewView from "./views/OverviewView.vue";
@@ -106,10 +115,20 @@ const pluginState = ref(null);
 const loadingState = ref(false);
 const loadError = ref("");
 const refreshKey = ref(0);
+const selectedModel = ref("");
+const switchingModel = ref(false);
 
 const snackbar = reactive({ show: false, text: "", color: "success" });
 
 const themeName = computed(() => (isDark.value ? THEME_DARK : THEME_LIGHT));
+const modelOptions = computed(() => pluginState.value?.available_models || []);
+
+watch(
+  () => pluginState.value?.current_model,
+  (value) => {
+    selectedModel.value = value || "";
+  },
+);
 
 function notify(text, color = "success") {
   snackbar.text = text;
@@ -118,6 +137,30 @@ function notify(text, color = "success") {
 }
 
 provide("notify", notify);
+
+async function switchModel(model) {
+  const previous = pluginState.value?.current_model || "";
+  if (!model || model === previous) {
+    return;
+  }
+  switchingModel.value = true;
+  try {
+    const result = await apiPost("page/model", { model });
+    const current = result?.current_model || model;
+    if (pluginState.value) {
+      pluginState.value.current_model = current;
+    }
+    notify(
+      t("status.modelSwitched", "模型已切换: {model}", { model: current }),
+    );
+    refreshKey.value += 1;
+  } catch (error) {
+    selectedModel.value = previous;
+    notify(error?.message || t("error.generic", "操作失败"), "error");
+  } finally {
+    switchingModel.value = false;
+  }
+}
 
 async function loadState() {
   loadingState.value = true;
@@ -179,9 +222,8 @@ body {
 }
 
 .page-shell {
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 20px 24px 40px;
+  width: 100%;
+  padding: 16px 16px 32px;
 }
 
 /* Vuetify 3.7 renders outlined cards with `currentColor`, which is far too
@@ -192,7 +234,7 @@ body {
 
 .page-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
@@ -207,12 +249,10 @@ body {
   margin: 0;
 }
 
-.page-subtitle {
-  margin: 6px 0 0;
-  max-width: 720px;
-  font-size: 0.875rem;
-  line-height: 1.6;
-  color: rgba(var(--v-theme-on-surface), 0.62);
+.page-model-select {
+  flex: 1 1 240px;
+  min-width: 200px;
+  max-width: 320px;
 }
 
 .page-header__actions {
@@ -261,18 +301,6 @@ body {
 .card-title-text {
   font-size: 0.98rem;
   font-weight: 600;
-}
-
-.meta-label {
-  font-size: 0.75rem;
-  color: rgba(var(--v-theme-on-surface), 0.55);
-  line-height: 1.4;
-}
-
-.meta-value {
-  font-size: 0.875rem;
-  line-height: 1.5;
-  word-break: break-word;
 }
 
 .prompt-clamp {

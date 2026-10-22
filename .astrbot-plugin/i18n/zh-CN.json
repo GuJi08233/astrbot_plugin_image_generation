@@ -6,16 +6,13 @@
   },
   "pages": {
     "dashboard": {
-      "eyebrow": "Plugin Page",
       "title": "通用生图控制台",
-      "description": "在 AstrBot WebUI 中提交生图任务、查看队列状态并下载生成结果。",
       "refresh": "刷新",
       "submit": "开始生成",
       "submitting": "提交中...",
-      "uploading": "上传中...",
       "status": {
         "model": "当前模型",
-        "queue": "队列",
+        "modelSwitched": "模型已切换: {model}",
         "queued": "排队中",
         "running": "生成中",
         "succeeded": "已完成",
@@ -47,7 +44,6 @@
         "resultEmptyTitle": "提交后在此查看结果",
         "resultEmptyDescription": "生成进度、错误信息和图片结果会显示在这里，无需离开当前页面。",
         "resultTitle": "本次生成",
-        "resultCount": "{count} 个任务",
         "openTask": "在任务页查看",
         "clearResult": "关闭结果"
       },
@@ -55,9 +51,6 @@
         "eyebrow": "Queue",
         "title": "任务队列",
         "empty": "暂无任务",
-        "createdAt": "创建",
-        "progress": "进度",
-        "results": "结果",
         "keywordPlaceholder": "任务 ID / 提示词 / 预设 / 人设 / 模型 / UMO",
         "sourceAll": "全部来源",
         "modelAll": "全部模型",
@@ -76,19 +69,10 @@
         "title": "任务详情",
         "cancel": "取消任务",
         "download": "下载图片",
-        "taskId": "任务 ID",
-        "createdAt": "创建时间",
-        "startedAt": "开始时间",
-        "finishedAt": "结束时间",
         "duration": "耗时",
-        "queued": "排队",
         "requested": "请求数量",
         "references": "参考图",
-        "preset": "预设",
-        "persona": "人设",
         "template": "模板",
-        "none": "无",
-        "message": "消息",
         "error": "错误",
         "items": "子任务",
         "results": "生成结果",
@@ -100,16 +84,15 @@
         "previewUnavailable": "暂无预览",
         "previewFailed": "预览失败",
         "expandPrompt": "展开完整提示词",
-        "collapsePrompt": "收起提示词"
+        "collapsePrompt": "收起提示词",
+        "promptNotStored": "历史记录未保存完整提示词，仅能显示摘要",
+        "viewError": "查看完整错误",
+        "collapseError": "收起错误"
       },
       "message": {
-        "stateLoaded": "状态已刷新",
         "taskSubmitted": "任务已提交",
         "uploaded": "参考图已上传",
-        "cancelled": "已请求取消任务",
-        "downloadStarted": "已开始下载",
-        "galleryLoaded": "图库已刷新",
-        "statsLoaded": "统计已刷新"
+        "cancelled": "已请求取消任务"
       },
       "error": {
         "generic": "操作失败"
@@ -149,17 +132,20 @@
         "unavailable": "文件已清理",
         "keywordPlaceholder": "任务 ID / 提示词 / 预设 / 模型",
         "modelAll": "全部模型",
-        "model": "模型",
         "daysAll": "全部时间",
         "days1": "近 1 天",
         "days7": "近 7 天",
         "days30": "近 30 天",
         "count": "共 {total} 张，可用 {available} 张",
+        "hiddenCount": "已隐藏 {count} 张已清理",
+        "hideUnavailable": "隐藏已清理",
+        "prevPage": "上一页",
+        "nextPage": "下一页",
+        "pageInfo": "第 {page} / {pages} 页",
         "openTask": "查看任务"
       },
       "lightbox": {
-        "close": "关闭",
-        "open": "查看大图"
+        "close": "关闭"
       }
     }
   },

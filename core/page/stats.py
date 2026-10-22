@@ -85,8 +85,7 @@ class PageStatsMixin:
             else:
                 start_day = min(stamp.date() for stamp in stamps)
                 end_day = max(stamp.date() for stamp in stamps)
-                if end_day < current.date():
-                    end_day = current.date()
+                end_day = max(end_day, current.date())
 
         day_counts: Counter[str] = Counter()
         for stamp in stamps:

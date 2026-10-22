@@ -70,7 +70,8 @@ from .tasks.models import (
 from .tasks.store import GenerationTaskStore
 from .tasks.usage import UsageManager
 
-__all__ = [
+# Grouped by role on purpose; alphabetical order would lose the grouping.
+__all__ = [  # noqa: RUF022
     # Base classes and core components.
     "BaseImageAdapter",
     "ImageGenerator",

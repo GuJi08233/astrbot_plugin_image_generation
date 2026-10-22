@@ -144,21 +144,19 @@ def _ascii_token_boundary_ok(text: str, start: int, end: int) -> bool:
     name = text[start:end]
     if not name.isascii():
         return True
-    if (
+    glued_to_previous = (
         start > 0
         and text[start - 1].isascii()
         and text[start - 1].isalnum()
         and name[0].isalnum()
-    ):
-        return False
-    if (
+    )
+    glued_to_next = (
         end < len(text)
         and text[end].isascii()
         and text[end].isalnum()
         and name[-1].isalnum()
-    ):
-        return False
-    return True
+    )
+    return not glued_to_previous and not glued_to_next
 
 
 def extract_templates_from_prompt(

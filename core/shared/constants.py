@@ -106,6 +106,14 @@ DEFAULT_MAX_IMAGES_PER_MESSAGE = 5
 MAX_QUOTED_TEXT_CHARS = 1000
 """Maximum characters taken from quoted messages and merged-forward cards."""
 
+# Provider errors are kept long enough for the Dashboard Page to show what the
+# upstream API actually returned; log-only paths use much smaller limits.
+TASK_ERROR_MAX_CHARS = 2000
+"""Maximum characters kept for one task-level provider error."""
+
+TASK_ITEM_ERROR_MAX_CHARS = 1000
+"""Maximum characters kept for one sub-request provider error."""
+
 DEFAULT_MAX_IMAGE_SIZE_MB = 10
 """Default maximum reference image size in MB."""
 

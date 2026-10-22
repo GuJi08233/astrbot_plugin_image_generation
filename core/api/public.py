@@ -7,27 +7,6 @@ from typing import Any
 
 from astrbot.api import logger
 
-from .models import (
-    ImageGenerationOperationResult,
-    ImageGenerationResult,
-    ImageGenerationSubmitResult,
-    ImageGenerationTaskSnapshot,
-    PublicAPIResultCode,
-)
-from ..tasks.models import GenerationTaskCreationError, GenerationTaskRecord
-from ..shared.logging import (
-    format_log_event,
-    log_prefix,
-    mask_sensitive,
-    safe_log_error_body,
-    safe_log_text,
-)
-from ..generation.reference_collector import (
-    collect_reference_images_from_personas,
-    deduplicate_reference_images,
-    download_reference_images,
-)
-from ..tasks.ids import new_task_id
 from ..config.templates import (
     build_generation_prompt,
     extract_templates_from_prompt,
@@ -35,7 +14,28 @@ from ..config.templates import (
     normalize_name_items,
     resolve_named_templates,
 )
+from ..generation.reference_collector import (
+    collect_reference_images_from_personas,
+    deduplicate_reference_images,
+    download_reference_images,
+)
+from ..shared.logging import (
+    format_log_event,
+    log_prefix,
+    mask_sensitive,
+    safe_log_error_body,
+    safe_log_text,
+)
 from ..shared.types import ImageCapability, ImageData
+from ..tasks.ids import new_task_id
+from ..tasks.models import GenerationTaskCreationError, GenerationTaskRecord
+from .models import (
+    ImageGenerationOperationResult,
+    ImageGenerationResult,
+    ImageGenerationSubmitResult,
+    ImageGenerationTaskSnapshot,
+    PublicAPIResultCode,
+)
 
 LOG = log_prefix("PublicAPI")
 DEFAULT_SOURCE = "公共接口"
