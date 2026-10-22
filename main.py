@@ -113,6 +113,7 @@ class ImageGenerationPlugin(CommandHandlerMixin, Star):
             context=self.context,
             config_manager=self.config_manager,
             task_manager=self.task_manager,
+            image_processor=self.image_processor,
             create_background_task=self.create_background_task,
         )
 
@@ -336,6 +337,19 @@ class ImageGenerationPlugin(CommandHandlerMixin, Star):
         self.task_manager.update_generation_worker_count(
             self.config_manager.max_running_generation_tasks
         )
+
+    async def switch_generation_model(self, model: str) -> None:
+        """Persist and activate one generation model.
+
+        Args:
+            model: Full model identifier in `provider/model` form.
+        """
+        self.config_manager.save_model_setting(model)
+        self.config_manager.reload()
+        self.reload_runtime_settings()
+        if self.generator and self.config_manager.adapter_config:
+            await self.generator.update_adapter(self.config_manager.adapter_config)
+            self.generation_executor.update_generator(self.generator)
 
     def create_generation_task(
         self,
@@ -764,16 +778,7 @@ class ImageGenerationPlugin(CommandHandlerMixin, Star):
             if 0 <= index < len(models):
                 raw_model = models[index]  # "provider/model"
 
-                # Save config and reload runtime helpers.
-                self.config_manager.save_model_setting(raw_model)
-                self.config_manager.reload()
-                self.reload_runtime_settings()
-
-                if self.generator:
-                    await self.generator.update_adapter(
-                        self.config_manager.adapter_config
-                    )
-                    self.generation_executor.update_generator(self.generator)
+                await self.switch_generation_model(raw_model)
 
                 yield event.plain_result(f"✅ 模型已切换: {raw_model}")
             else:

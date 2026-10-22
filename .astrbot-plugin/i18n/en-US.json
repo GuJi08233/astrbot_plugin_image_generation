@@ -8,13 +8,13 @@
     "dashboard": {
       "eyebrow": "Plugin Page",
       "title": "Universal Image Generation Dashboard",
-      "description": "Submit generation tasks, monitor the queue, and download results inside AstrBot WebUI.",
       "refresh": "Refresh",
       "submit": "Generate",
       "submitting": "Submitting...",
       "uploading": "Uploading...",
       "status": {
         "model": "Current model",
+        "modelSwitched": "Switched to {model}",
         "queue": "Queue",
         "queued": "Queued",
         "running": "Running",
@@ -100,7 +100,10 @@
         "previewUnavailable": "Preview unavailable",
         "previewFailed": "Preview failed",
         "expandPrompt": "Show full prompt",
-        "collapsePrompt": "Collapse prompt"
+        "collapsePrompt": "Collapse prompt",
+        "promptNotStored": "The full prompt was not stored for this record; only the summary is available",
+        "viewError": "View full error",
+        "collapseError": "Collapse error"
       },
       "message": {
         "stateLoaded": "State refreshed",
@@ -155,6 +158,11 @@
         "days7": "Last 7 days",
         "days30": "Last 30 days",
         "count": "{total} images, {available} available",
+        "hiddenCount": "{count} cleared hidden",
+        "hideUnavailable": "Hide cleared",
+        "prevPage": "Previous",
+        "nextPage": "Next",
+        "pageInfo": "Page {page} / {pages}",
         "openTask": "Open task"
       },
       "lightbox": {

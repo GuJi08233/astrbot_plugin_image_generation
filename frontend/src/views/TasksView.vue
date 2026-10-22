@@ -7,15 +7,6 @@
             <div class="section-caption">{{ t("tasks.eyebrow", "Queue") }}</div>
             <div class="card-title-text mt-1">{{ t("tasks.title", "任务队列") }}</div>
           </div>
-          <v-btn
-            variant="tonal"
-            size="small"
-            prepend-icon="$refresh"
-            :loading="loading"
-            @click="reload(true)"
-          >
-            {{ t("refresh", "刷新") }}
-          </v-btn>
         </div>
         <v-divider />
 
@@ -87,7 +78,6 @@
               type="button"
               class="task-row"
               :class="{ 'task-row--active': task.task_id === selectedId }"
-              :style="{ '--status-color': statusCssColor(task.status) }"
               @click="selectTask(task.task_id)"
             >
               <span
@@ -210,6 +200,9 @@
                     : t("detail.expandPrompt", "展开完整提示词")
                 }}
               </v-btn>
+              <div v-if="promptSummaryOnly" class="section-caption mt-1">
+                {{ t("detail.promptNotStored", "历史记录未保存完整提示词，仅能显示摘要") }}
+              </div>
             </div>
 
             <v-progress-linear
@@ -266,10 +259,30 @@
               v-if="detail.error"
               type="error"
               variant="tonal"
-              density="compact"
+              density="comfortable"
               class="mt-4"
-              :text="detail.error"
-            />
+            >
+              <div
+                class="error-text"
+                :class="{ 'error-text--clamped': !errorExpanded }"
+              >
+                {{ detail.error }}
+              </div>
+              <v-btn
+                v-if="isLongError(detail.error)"
+                variant="text"
+                size="x-small"
+                color="error"
+                class="px-0 mt-1"
+                @click="errorExpanded = !errorExpanded"
+              >
+                {{
+                  errorExpanded
+                    ? t("detail.collapseError", "收起错误")
+                    : t("detail.viewError", "查看完整错误")
+                }}
+              </v-btn>
+            </v-alert>
 
             <div class="section-head mt-5 mb-2">
               <span class="card-title-text">{{ t("detail.results", "生成结果") }}</span>
@@ -344,7 +357,31 @@
                     </span>
                   </td>
                   <td>{{ item.result_count }}</td>
-                  <td class="section-caption">{{ item.error || "--" }}</td>
+                  <td class="section-caption">
+                    <span v-if="!item.error">--</span>
+                    <template v-else>
+                      <span
+                        class="error-text"
+                        :class="{ 'error-text--clamped': !itemExpanded[item.index] }"
+                      >
+                        {{ item.error }}
+                      </span>
+                      <v-btn
+                        v-if="isLongError(item.error)"
+                        variant="text"
+                        size="x-small"
+                        color="primary"
+                        class="px-1"
+                        @click="itemExpanded[item.index] = !itemExpanded[item.index]"
+                      >
+                        {{
+                          itemExpanded[item.index]
+                            ? t("detail.collapseError", "收起错误")
+                            : t("detail.viewError", "查看完整错误")
+                        }}
+                      </v-btn>
+                    </template>
+                  </td>
                 </tr>
               </tbody>
             </v-table>
@@ -412,6 +449,8 @@ const availableSources = ref([]);
 const selectedId = ref("");
 const detail = ref(null);
 const promptExpanded = ref(false);
+const errorExpanded = ref(false);
+const itemExpanded = reactive({});
 const lightbox = reactive({
   open: false,
   src: "",
@@ -462,20 +501,38 @@ const countText = computed(() => ({
   pages: pages.value,
 }));
 
-const promptText = computed(() => detail.value?.prompt || "");
-const promptPreview = computed(
-  () =>
-    detail.value?.prompt_summary ||
-    (promptText.value.length > 160
-      ? `${promptText.value.slice(0, 160)}…`
-      : promptText.value),
+const PROMPT_PREVIEW_CHARS = 160;
+
+// The stored summary is a truncated one-liner (and can be longer than a short
+// prompt), so the preview is always derived from the prompt itself.
+const promptText = computed(() =>
+  (detail.value?.prompt || detail.value?.prompt_summary || "").trim(),
+);
+const promptPreview = computed(() =>
+  promptText.value.length > PROMPT_PREVIEW_CHARS
+    ? `${promptText.value.slice(0, PROMPT_PREVIEW_CHARS)}…`
+    : promptText.value,
 );
 const hasMorePrompt = computed(
-  () => promptText.value.length > promptPreview.value.length,
+  () => promptText.value.length > PROMPT_PREVIEW_CHARS,
+);
+// Older records predate prompt persistence and only kept the summary.
+const promptSummaryOnly = computed(
+  () =>
+    !String(detail.value?.prompt || "").trim() &&
+    !!String(detail.value?.prompt_summary || "").trim(),
 );
 
 const previewSrc = (taskId, index) =>
   cache[previewKey(taskId, index)]?.data_url || "";
+
+// Provider error bodies are long; the detail panel collapses them to one line
+// until asked for the full text.
+const ERROR_PREVIEW_CHARS = 40;
+
+function isLongError(text) {
+  return String(text || "").trim().length > ERROR_PREVIEW_CHARS;
+}
 
 function debouncedReload() {
   if (searchTimer) {
@@ -540,6 +597,10 @@ async function selectTask(taskId, { silent = false } = {}) {
   }
   if (taskId !== selectedId.value) {
     promptExpanded.value = false;
+    errorExpanded.value = false;
+    for (const key of Object.keys(itemExpanded)) {
+      delete itemExpanded[key];
+    }
   }
   selectedId.value = taskId;
   try {
@@ -694,7 +755,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 12px;
   width: 100%;
-  padding: 12px 14px 12px 18px;
+  padding: 12px 14px;
   border: 1px solid rgba(var(--v-theme-on-surface), 0.09);
   border-radius: 10px;
   background: rgba(var(--v-theme-on-surface), 0.015);
@@ -704,17 +765,6 @@ onBeforeUnmount(() => {
   transition:
     background-color 0.15s ease,
     border-color 0.15s ease;
-}
-
-.task-row::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 10px;
-  bottom: 10px;
-  width: 3px;
-  border-radius: 0 3px 3px 0;
-  background: var(--status-color, rgba(var(--v-theme-on-surface), 0.3));
 }
 
 .task-row:hover {
@@ -831,7 +881,7 @@ onBeforeUnmount(() => {
 
 .detail-id {
   color: rgba(var(--v-theme-on-surface), 0.6);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .prompt-block {
@@ -841,14 +891,14 @@ onBeforeUnmount(() => {
 }
 
 .prompt-label {
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   font-weight: 600;
   color: rgba(var(--v-theme-on-surface), 0.55);
   margin-bottom: 4px;
 }
 
 .prompt-text {
-  font-size: 0.875rem;
+  font-size: 0.95rem;
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
@@ -866,15 +916,29 @@ onBeforeUnmount(() => {
 }
 
 .stat-label {
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   color: rgba(var(--v-theme-on-surface), 0.5);
   margin-bottom: 2px;
 }
 
 .stat-value {
-  font-size: 0.86rem;
+  font-size: 0.95rem;
   line-height: 1.5;
   word-break: break-word;
+}
+
+.error-text {
+  font-size: 0.87rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.error-text--clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .result-grid {

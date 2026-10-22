@@ -14,6 +14,7 @@ from .models import (
     GenerationTaskStatus,
     coerce_generation_item_status,
 )
+from ..shared.constants import TASK_ERROR_MAX_CHARS, TASK_ITEM_ERROR_MAX_CHARS
 from ..shared.logging import log_prefix, safe_log_error_body, safe_log_text
 
 LOG = log_prefix("GenerationTaskStore")
@@ -219,7 +220,13 @@ class GenerationTaskStore:
             started_at=self._str_to_datetime(raw_record.get("started_at")),
             finished_at=self._str_to_datetime(raw_record.get("finished_at")),
             message=safe_log_error_body(raw_record.get("message") or "", 300),
-            error=safe_log_error_body(raw_record.get("error") or "", 300),
+            # Provider error bodies are the only place the Page can show what went
+            # wrong, so keep the readable message instead of the log-sized snippet.
+            error=safe_log_error_body(
+                raw_record.get("error") or "",
+                TASK_ERROR_MAX_CHARS,
+                field_limit=TASK_ERROR_MAX_CHARS,
+            ),
             result_count=self._safe_int(raw_record.get("result_count"), 0, 0),
             result_paths=self._safe_str_list(raw_record.get("result_paths")),
             delivered=bool(raw_record.get("delivered", False)),
@@ -277,7 +284,11 @@ class GenerationTaskStore:
                 index=index,
                 status=coerce_generation_item_status(raw_item.get("status")),
                 result_count=self._safe_int(raw_item.get("result_count"), 0, 0),
-                error=safe_log_error_body(raw_item.get("error") or "", 200),
+                error=safe_log_error_body(
+                    raw_item.get("error") or "",
+                    TASK_ITEM_ERROR_MAX_CHARS,
+                    field_limit=TASK_ITEM_ERROR_MAX_CHARS,
+                ),
                 retry_attempts=self._safe_int(raw_item.get("retry_attempts"), 0, 0),
                 max_retry_attempts=self._safe_int(
                     raw_item.get("max_retry_attempts"),

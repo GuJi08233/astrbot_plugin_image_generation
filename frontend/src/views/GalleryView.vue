@@ -5,15 +5,6 @@
         <div class="section-caption">{{ t("gallery.eyebrow", "Gallery") }}</div>
         <div class="card-title-text mt-1">{{ t("gallery.title", "生成图库") }}</div>
       </div>
-      <v-btn
-        variant="tonal"
-        size="small"
-        prepend-icon="$refresh"
-        :loading="loading"
-        @click="reload"
-      >
-        {{ t("refresh", "刷新") }}
-      </v-btn>
     </div>
     <v-divider />
 
@@ -35,7 +26,7 @@
         variant="outlined"
         hide-details
         style="width: 170px"
-        @update:model-value="reload"
+        @update:model-value="reload(true)"
       />
       <v-select
         v-model="filters.days"
@@ -44,7 +35,7 @@
         variant="outlined"
         hide-details
         style="width: 124px"
-        @update:model-value="reload"
+        @update:model-value="reload(true)"
       />
       <v-select
         v-model="filters.limit"
@@ -53,12 +44,25 @@
         variant="outlined"
         hide-details
         style="width: 96px"
-        @update:model-value="reload"
+        @update:model-value="reload(true)"
+      />
+      <v-switch
+        v-model="filters.hideUnavailable"
+        :label="t('gallery.hideUnavailable', '隐藏已清理')"
+        color="primary"
+        density="compact"
+        hide-details
+        inset
+        class="gallery-switch"
+        @update:model-value="reload(true)"
       />
     </div>
 
     <div class="section-caption px-4 pb-2">
       {{ t("gallery.count", "共 {total} 张，可用 {available} 张", countText) }}
+      <template v-if="hiddenCount > 0">
+        · {{ t("gallery.hiddenCount", "已隐藏 {count} 张已清理", { count: hiddenCount }) }}
+      </template>
     </div>
 
     <v-divider />
@@ -129,6 +133,31 @@
         </v-card>
       </div>
     </v-card-text>
+
+    <v-divider />
+    <div class="d-flex align-center px-3 py-1">
+      <v-btn
+        variant="text"
+        size="small"
+        :disabled="offset <= 0"
+        @click="reload(false, -1)"
+      >
+        {{ t("gallery.prevPage", "上一页") }}
+      </v-btn>
+      <v-spacer />
+      <span class="section-caption">
+        {{ t("gallery.pageInfo", "第 {page} / {pages} 页", pageText) }}
+      </span>
+      <v-spacer />
+      <v-btn
+        variant="text"
+        size="small"
+        :disabled="offset + filters.limit >= total"
+        @click="reload(false, 1)"
+      >
+        {{ t("gallery.nextPage", "下一页") }}
+      </v-btn>
+    </div>
   </v-card>
 
   <ImageLightbox
@@ -172,11 +201,14 @@ const filters = reactive({
   model: "",
   days: 7,
   limit: 48,
+  hideUnavailable: true,
 });
 
 const items = ref([]);
 const total = ref(0);
+const offset = ref(0);
 const availableCount = ref(0);
+const hiddenCount = ref(0);
 const loading = ref(false);
 const availableModels = ref([]);
 const lightbox = reactive({
@@ -188,7 +220,7 @@ const lightbox = reactive({
 });
 
 let searchTimer = null;
-let pendingReload = false;
+let pendingReload = null;
 
 const modelOptions = computed(() => [
   { title: t("gallery.modelAll", "全部模型"), value: "" },
@@ -207,6 +239,11 @@ const countText = computed(() => ({
   available: availableCount.value,
 }));
 
+const pageText = computed(() => ({
+  page: Math.floor(offset.value / Math.max(1, filters.limit)) + 1,
+  pages: Math.max(1, Math.ceil(total.value / Math.max(1, filters.limit))),
+}));
+
 const previewSrc = (taskId, index) =>
   cache[previewKey(taskId, index)]?.data_url || "";
 
@@ -214,13 +251,18 @@ function debouncedReload() {
   if (searchTimer) {
     window.clearTimeout(searchTimer);
   }
-  searchTimer = window.setTimeout(reload, 300);
+  searchTimer = window.setTimeout(() => reload(true), 300);
 }
 
-async function reload() {
+async function reload(resetOffset = false, pageDelta = 0) {
   if (loading.value) {
-    pendingReload = true;
+    pendingReload = { resetOffset, pageDelta };
     return;
+  }
+  if (resetOffset) {
+    offset.value = 0;
+  } else if (pageDelta) {
+    offset.value = Math.max(0, offset.value + pageDelta * filters.limit);
   }
   loading.value = true;
   try {
@@ -228,11 +270,14 @@ async function reload() {
       model: filters.model,
       days: filters.days,
       limit: filters.limit,
+      offset: offset.value,
+      available_only: filters.hideUnavailable ? 1 : 0,
       keyword: filters.keyword.trim(),
     });
     items.value = result?.items || [];
     total.value = result?.total || 0;
     availableCount.value = result?.available_count || 0;
+    hiddenCount.value = result?.hidden_count || 0;
     availableModels.value = result?.models || [];
     items.value.forEach((item) => loadPreview(item.task_id, item.image_index));
   } catch (error) {
@@ -240,8 +285,9 @@ async function reload() {
   } finally {
     loading.value = false;
     if (pendingReload) {
-      pendingReload = false;
-      reload();
+      const next = pendingReload;
+      pendingReload = null;
+      reload(next.resetOffset, next.pageDelta);
     }
   }
 }
@@ -270,10 +316,10 @@ function downloadLightbox() {
 
 watch(
   () => props.refreshKey,
-  () => reload(),
+  () => reload(true),
 );
 
-onMounted(reload);
+onMounted(() => reload(true));
 
 onBeforeUnmount(() => {
   if (searchTimer) {
@@ -288,6 +334,15 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+.gallery-switch {
+  flex: none;
+}
+
+.gallery-switch :deep(.v-label) {
+  font-size: 0.82rem;
+  opacity: 0.75;
 }
 
 .gallery-grid {

@@ -12,6 +12,8 @@ from ..shared.constants import (
     DEFAULT_ENABLE_GENERATION_TASK_HISTORY,
     DEFAULT_GENERATION_TASK_HISTORY_LIMIT,
     DEFAULT_GENERATION_TASK_HISTORY_RETENTION_DAYS,
+    TASK_ERROR_MAX_CHARS,
+    TASK_ITEM_ERROR_MAX_CHARS,
 )
 from .models import (
     ACTIVE_GENERATION_ITEM_STATUSES,
@@ -369,7 +371,15 @@ class TaskManager(
         error: str = "",
     ) -> None:
         """Mark pending or running sub-requests with a final item status."""
-        safe_error = safe_log_error_body(error, 200) if error else ""
+        safe_error = (
+            safe_log_error_body(
+                error,
+                TASK_ITEM_ERROR_MAX_CHARS,
+                field_limit=TASK_ITEM_ERROR_MAX_CHARS,
+            )
+            if error
+            else ""
+        )
         for item in record.items.values():
             if item.status not in ACTIVE_GENERATION_ITEM_STATUSES:
                 continue
@@ -395,7 +405,15 @@ class TaskManager(
         record.status = status
         record.finished_at = record.finished_at or datetime.now()
         record.message = safe_log_error_body(message, 300)
-        record.error = safe_log_error_body(error, 300) if error else ""
+        record.error = (
+            safe_log_error_body(
+                error,
+                TASK_ERROR_MAX_CHARS,
+                field_limit=TASK_ERROR_MAX_CHARS,
+            )
+            if error
+            else ""
+        )
         if result_paths is not None:
             record.result_paths = list(result_paths)
         final_result_count = (
@@ -493,7 +511,15 @@ class TaskManager(
         )
         item.status = self._safe_generation_item_status(status)
         item.result_count = max(0, result_count)
-        item.error = safe_log_error_body(error, 200) if error else ""
+        item.error = (
+            safe_log_error_body(
+                error,
+                TASK_ITEM_ERROR_MAX_CHARS,
+                field_limit=TASK_ITEM_ERROR_MAX_CHARS,
+            )
+            if error
+            else ""
+        )
 
     def update_generation_task_progress(
         self,
@@ -607,6 +633,10 @@ class TaskManager(
             f"{log_prefix('Task', task_id)} "
             + format_log_event("任务失败", 摘要=_task_failure_summary(record))
         )
+        if record.error:
+            # The summary line is capped for readability; log the retained error
+            # separately so the log alone is enough to diagnose the failure.
+            logger.warning(f"{log_prefix('Task', task_id)} 错误详情: {record.error}")
         self._save_generation_tasks()
         self._notify_generation_task_terminal(task_id)
 

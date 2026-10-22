@@ -8,13 +8,13 @@
     "dashboard": {
       "eyebrow": "Plugin Page",
       "title": "通用生图控制台",
-      "description": "在 AstrBot WebUI 中提交生图任务、查看队列状态并下载生成结果。",
       "refresh": "刷新",
       "submit": "开始生成",
       "submitting": "提交中...",
       "uploading": "上传中...",
       "status": {
         "model": "当前模型",
+        "modelSwitched": "模型已切换: {model}",
         "queue": "队列",
         "queued": "排队中",
         "running": "生成中",
@@ -100,7 +100,10 @@
         "previewUnavailable": "暂无预览",
         "previewFailed": "预览失败",
         "expandPrompt": "展开完整提示词",
-        "collapsePrompt": "收起提示词"
+        "collapsePrompt": "收起提示词",
+        "promptNotStored": "历史记录未保存完整提示词，仅能显示摘要",
+        "viewError": "查看完整错误",
+        "collapseError": "收起错误"
       },
       "message": {
         "stateLoaded": "状态已刷新",
@@ -155,6 +158,11 @@
         "days7": "近 7 天",
         "days30": "近 30 天",
         "count": "共 {total} 张，可用 {available} 张",
+        "hiddenCount": "已隐藏 {count} 张已清理",
+        "hideUnavailable": "隐藏已清理",
+        "prevPage": "上一页",
+        "nextPage": "下一页",
+        "pageInfo": "第 {page} / {pages} 页",
         "openTask": "查看任务"
       },
       "lightbox": {
