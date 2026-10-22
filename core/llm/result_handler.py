@@ -23,9 +23,9 @@ from astrbot.core.provider.entities import ProviderRequest
 from ..config.manager import ConfigManager
 from ..formatting.result import format_generation_failure_message
 from ..generation.image_processor import ImageProcessor
-from ..tasks.models import GenerationTaskRecord, GenerationTaskStatus
 from ..shared.logging import log_prefix, safe_log_error_body, safe_log_text
 from ..tasks.manager import TaskManager
+from ..tasks.models import GenerationTaskRecord, GenerationTaskStatus
 from .tools import DeliverySendMessageToUserTool
 
 IMAGE_GENERATION_TASK_WOKE_SYSTEM_PROMPT = (

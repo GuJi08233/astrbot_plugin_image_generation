@@ -8,14 +8,14 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ..shared.constants import TASK_ERROR_MAX_CHARS, TASK_ITEM_ERROR_MAX_CHARS
+from ..shared.logging import log_prefix, safe_log_error_body, safe_log_text
 from .models import (
     GenerationTaskItem,
     GenerationTaskRecord,
     GenerationTaskStatus,
     coerce_generation_item_status,
 )
-from ..shared.constants import TASK_ERROR_MAX_CHARS, TASK_ITEM_ERROR_MAX_CHARS
-from ..shared.logging import log_prefix, safe_log_error_body, safe_log_text
 
 LOG = log_prefix("GenerationTaskStore")
 

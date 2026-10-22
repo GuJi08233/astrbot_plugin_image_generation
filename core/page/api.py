@@ -238,9 +238,10 @@ class ImageGenerationPageAPI(PagePayloadMixin, PageStatsMixin):
             if status_filter == "active":
                 if not record.is_active:
                     continue
-            elif status_filter not in {"", "all"}:
-                if record.status.value != status_filter:
-                    continue
+            elif status_filter not in {"", "all"} and (
+                record.status.value != status_filter
+            ):
+                continue
 
             if source_filter and source_filter not in record_source.lower():
                 continue

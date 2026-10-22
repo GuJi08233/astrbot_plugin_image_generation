@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 from astrbot.api import logger
 
@@ -33,16 +33,25 @@ class AgnesAIAdapter(BaseImageAdapter):
         "agnes-image-2.5",
         "agnes-image-2-5",
     )
-    TIER_VALUES = {"1K", "2K", "3K", "4K"}
-    TIER_RATIOS = {"1:1", "3:4", "4:3", "16:9", "9:16", "2:3", "3:2", "21:9"}
-    RATIO_FALLBACKS = {"4:5": "3:4", "5:4": "4:3"}
+    TIER_VALUES: ClassVar[set[str]] = {"1K", "2K", "3K", "4K"}
+    TIER_RATIOS: ClassVar[set[str]] = {
+        "1:1",
+        "3:4",
+        "4:3",
+        "16:9",
+        "9:16",
+        "2:3",
+        "3:2",
+        "21:9",
+    }
+    RATIO_FALLBACKS: ClassVar[dict[str, str]] = {"4:5": "3:4", "5:4": "4:3"}
 
-    EXTRA_1K_SIZE_MAP = {
+    EXTRA_1K_SIZE_MAP: ClassVar[dict[str, str]] = {
         "4:5": "832x1024",
         "5:4": "1024x832",
         "21:9": "1024x448",
     }
-    EXTRA_2K_SIZE_MAP = {
+    EXTRA_2K_SIZE_MAP: ClassVar[dict[str, str]] = {
         "4:5": "1632x2048",
         "5:4": "2048x1632",
         "21:9": "2048x864",

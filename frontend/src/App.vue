@@ -303,18 +303,6 @@ body {
   font-weight: 600;
 }
 
-.meta-label {
-  font-size: 0.75rem;
-  color: rgba(var(--v-theme-on-surface), 0.55);
-  line-height: 1.4;
-}
-
-.meta-value {
-  font-size: 0.875rem;
-  line-height: 1.5;
-  word-break: break-word;
-}
-
 .prompt-clamp {
   display: -webkit-box;
   -webkit-line-clamp: 2;

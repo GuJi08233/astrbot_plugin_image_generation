@@ -15,6 +15,15 @@ from ..shared.constants import (
     TASK_ERROR_MAX_CHARS,
     TASK_ITEM_ERROR_MAX_CHARS,
 )
+from ..shared.logging import (
+    format_log_event,
+    format_optional,
+    format_seconds,
+    log_prefix,
+    mask_sensitive,
+    safe_log_error_body,
+    safe_log_text,
+)
 from .models import (
     ACTIVE_GENERATION_ITEM_STATUSES,
     ACTIVE_GENERATION_STATUSES,
@@ -27,21 +36,12 @@ from .models import (
     GenerationTaskStatus,
     coerce_generation_item_status,
 )
-from .store import GenerationTaskStore
 from .runtime import (
     BackgroundTaskMixin,
     GenerationQueueRunnerMixin,
     GenerationTaskNotifierMixin,
 )
-from ..shared.logging import (
-    format_log_event,
-    format_optional,
-    format_seconds,
-    log_prefix,
-    mask_sensitive,
-    safe_log_error_body,
-    safe_log_text,
-)
+from .store import GenerationTaskStore
 
 LOG = log_prefix("TaskManager")
 

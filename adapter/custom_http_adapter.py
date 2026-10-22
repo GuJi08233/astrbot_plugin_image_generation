@@ -337,8 +337,7 @@ class CustomHTTPAdapter(BaseImageAdapter):
         normalized_path = path.strip()
         if not normalized_path or normalized_path == "$":
             return [data]
-        if normalized_path.startswith("$."):
-            normalized_path = normalized_path[2:]
+        normalized_path = normalized_path.removeprefix("$.")
 
         values = [data]
         for part in normalized_path.split("."):

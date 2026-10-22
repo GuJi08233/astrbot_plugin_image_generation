@@ -7,7 +7,6 @@ import time
 from typing import Any
 
 import aiohttp
-
 from astrbot.api import logger
 
 from ..core.adapters.base import BaseImageAdapter
@@ -47,7 +46,7 @@ class OpenAIChatAdapter(BaseImageAdapter):
             return images, None
 
         # Try to extract a text error from chat completion responses.
-        if "choices" in response and response["choices"]:
+        if response.get("choices"):
             content = response["choices"][0].get("message", {}).get("content")
             if isinstance(content, str) and content.strip():
                 return None, f"未生成图片，API 返回文本: {content[:100]}"

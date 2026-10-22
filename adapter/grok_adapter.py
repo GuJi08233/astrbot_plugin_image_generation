@@ -186,9 +186,9 @@ class GrokAdapter(BaseImageAdapter):
         for item in response["data"]:
             if not isinstance(item, dict):
                 continue
-            if "b64_json" in item and item["b64_json"]:
+            if item.get("b64_json"):
                 images.append(base64.b64decode(item["b64_json"]))
-            elif "url" in item and item["url"]:
+            elif item.get("url"):
                 # Download URL results even though b64_json is requested.
                 async with self._get_session().get(
                     item["url"], proxy=self.proxy, timeout=self._get_download_timeout()

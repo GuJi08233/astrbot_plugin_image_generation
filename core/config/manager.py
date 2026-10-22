@@ -7,18 +7,6 @@ from typing import Any
 from astrbot.api import logger
 from astrbot.core.config.astrbot_config import AstrBotConfig
 
-from .validator import ConfigValidator
-from .models import (
-    GenerationSettings,
-    ImageAuditSettings,
-    PersonaTemplate,
-    PluginConfig,
-    PromptAuditSettings,
-    SafetyAuditSettings,
-    UsageSettings,
-)
-from .provider_parser import ConfigProviderParserMixin
-from .templates import ConfigTemplateStoreMixin
 from ..shared.constants import (
     ALL_LLM_TOOLS,
     ALL_PROMPT_BODY_TEMPLATE_MATCH_ITEMS,
@@ -57,23 +45,35 @@ from ..shared.constants import (
 )
 from ..shared.logging import log_prefix, safe_log_text
 from ..shared.types import AdapterConfig
+from .models import (
+    GenerationSettings,
+    ImageAuditSettings,
+    PersonaTemplate,
+    PluginConfig,
+    PromptAuditSettings,
+    SafetyAuditSettings,
+    UsageSettings,
+)
+from .provider_parser import ConfigProviderParserMixin
+from .templates import ConfigTemplateStoreMixin
+from .validator import ConfigValidator
 
 __all__ = (
-    "ConfigManager",
-    "GenerationSettings",
-    "ImageAuditSettings",
     "LLM_TOOL_IMAGE_GENERATION",
     "LLM_TOOL_PRESET_EDIT",
     "LLM_TOOL_PRESET_QUERY",
     "LLM_TOOL_TASK_MANAGEMENT",
-    "PersonaTemplate",
-    "PluginConfig",
-    "PromptAuditSettings",
     "RESULT_INFO_COUNT",
     "RESULT_INFO_DURATION",
     "RESULT_INFO_MODEL",
     "RESULT_INFO_TASK_ID",
     "RESULT_INFO_USAGE",
+    "ConfigManager",
+    "GenerationSettings",
+    "ImageAuditSettings",
+    "PersonaTemplate",
+    "PluginConfig",
+    "PromptAuditSettings",
     "SafetyAuditSettings",
     "UsageSettings",
 )
@@ -108,9 +108,7 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
         )
         api_providers_raw = self._config.get("api_providers", [])
 
-        fallback_runtime_cfg = (
-            gen_cfg if not generation_runtime_cfg else generation_runtime_cfg
-        )
+        fallback_runtime_cfg = generation_runtime_cfg or gen_cfg
         all_provider_configs = self._load_provider_configs(
             api_providers_raw,
             fallback_runtime_cfg,
@@ -184,8 +182,8 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
         """Parse image generation behavior settings."""
         # Prefer the standalone runtime and task-history sections, but keep
         # reading old generation.* values when users upgrade from older versions.
-        fallback_runtime_cfg = cfg if not runtime_cfg else runtime_cfg
-        fallback_history_cfg = cfg if not history_cfg else history_cfg
+        fallback_runtime_cfg = runtime_cfg or cfg
+        fallback_history_cfg = history_cfg or cfg
         return GenerationSettings(
             default_aspect_ratio=self._get_str(
                 cfg,

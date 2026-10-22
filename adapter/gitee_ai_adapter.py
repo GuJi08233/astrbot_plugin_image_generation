@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import base64
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 import aiohttp
-
 from astrbot.api import logger
 
 from ..core.adapters.base import BaseImageAdapter
@@ -35,7 +34,7 @@ class GiteeAIAdapter(BaseImageAdapter):
     DEFAULT_BASE_URL = GITEE_AI_DEFAULT_BASE_URL
     DEFAULT_TEXT_MODEL = "z-image-turbo"
     DEFAULT_EDIT_MODEL = "LongCat-Image-Edit"
-    EDIT_MODELS = {
+    EDIT_MODELS: ClassVar[set[str]] = {
         "animesharp",
         "dreamo",
         "flux.1-dev",
@@ -47,7 +46,7 @@ class GiteeAIAdapter(BaseImageAdapter):
         "longcat-image-edit",
         "qwen-image-edit",
     }
-    IMAGE_EXTENSIONS = {
+    IMAGE_EXTENSIONS: ClassVar[dict[str, str]] = {
         "image/png": "png",
         "image/jpeg": "jpg",
         "image/jpg": "jpg",
@@ -57,12 +56,12 @@ class GiteeAIAdapter(BaseImageAdapter):
         "image/heif": "heif",
     }
 
-    EXTRA_1K_SIZE_MAP = {
+    EXTRA_1K_SIZE_MAP: ClassVar[dict[str, str]] = {
         "4:5": "832x1024",
         "5:4": "1024x832",
         "21:9": "1024x448",
     }
-    EXTRA_2K_SIZE_MAP = {
+    EXTRA_2K_SIZE_MAP: ClassVar[dict[str, str]] = {
         "4:5": "1632x2048",
         "5:4": "2048x1632",
         "21:9": "2048x864",

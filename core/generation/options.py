@@ -45,13 +45,12 @@ def _is_standalone_key(prompt: str, start: int, end: int) -> bool:
     """Return whether a size keyword is not glued to surrounding CJK text."""
     if start > 0 and _is_cjk_letter(prompt[start - 1]):
         return False
-    if (
+    glued_to_next = (
         end < len(prompt)
         and _is_cjk_letter(prompt[end])
         and prompt[end] not in _AFTER_KEY_PARTICLES
-    ):
-        return False
-    return True
+    )
+    return not glued_to_next
 
 
 def _clean_spans(prompt: str, spans: list[tuple[int, int]]) -> str:
