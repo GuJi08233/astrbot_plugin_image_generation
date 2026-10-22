@@ -321,6 +321,87 @@
             ]
           }
         },
+        "novelai": {
+          "name": "NovelAI native JSON API",
+          "hint": "Calls /v1/nai/generate-image with the NovelAI native request structure. Supports text to image and image to image with one reference, and returns JSON Base64 images.",
+          "base_url": {
+            "description": "API endpoint",
+            "hint": "Defaults to https://nai.rinko.ai and calls /v1/nai/generate-image. Compatible services must accept the native request body and return JSON images."
+          },
+          "proxy": {
+            "description": "Proxy URL",
+            "hint": "Optional. Example: http://127.0.0.1:7890."
+          },
+          "api_keys": {
+            "description": "API keys",
+            "hint": "Enter the service API key or token, such as ynai-…. Each generation and its retries use the same key."
+          },
+          "available_models": {
+            "description": "Available models",
+            "hint": "Used by the /生图模型 command. Keep this list aligned with models available to your account. V4 / V4.5 prompt structures are built automatically."
+          },
+          "capability_options": {
+            "description": "Model capabilities",
+            "hint": "Supports text to image, image to image with one reference, and aspect ratios. The global resolution setting has no effect; dimensions come from the width/height settings or the requested aspect ratio.",
+            "labels": [
+              "Text to image",
+              "Image to image",
+              "Aspect ratio"
+            ]
+          },
+          "timeout": {
+            "description": "Timeout override (seconds)",
+            "hint": "330 seconds is recommended to cover the server’s maximum 300-second generation time. Set to 0 to use Runtime Control. After a timeout, check the server generation log for the task status."
+          },
+          "max_retry_attempts": {
+            "description": "Maximum attempt count override",
+            "hint": "The default 1 sends a single request. Set to 0 to use Runtime Control. Only transport errors are retried, with the same idempotency key, payload, and API key. HTTP errors and invalid results are not resubmitted; check the original task on the server."
+          },
+          "width": {
+            "description": "Default image width",
+            "hint": "Used when no aspect ratio is selected. Range: 64–2048, in multiples of 64. Width × height must not exceed 3,145,728 pixels."
+          },
+          "height": {
+            "description": "Default image height",
+            "hint": "Used when no aspect ratio is selected. Range: 64–2048, in multiples of 64. Width × height must not exceed 3,145,728 pixels."
+          },
+          "steps": {
+            "description": "Sampling steps",
+            "hint": "Range: 1–50. Pricing and free-render conditions are determined by the server."
+          },
+          "sampler": {
+            "description": "Sampler",
+            "hint": "Enter a native sampler name supported by the model, such as k_euler_ancestral."
+          },
+          "scale": {
+            "description": "Prompt guidance scale (CFG)",
+            "hint": "Range: 0–10. Higher values usually follow the prompt more closely."
+          },
+          "seed": {
+            "description": "Seed",
+            "hint": "-1 chooses a random seed for each generation. A fixed nonnegative integer can reproduce the same parameters. Retries keep the same seed."
+          },
+          "negative_prompt": {
+            "description": "Negative prompt",
+            "hint": "Optional. Describe content to avoid. V4 / V4.5 negative prompt structures are built automatically. Quality tags and UC presets are not appended automatically."
+          },
+          "noise_schedule": {
+            "description": "Noise schedule",
+            "hint": "Enter a noise_schedule supported by the model and sampler, such as karras, exponential, or polyexponential."
+          },
+          "cfg_rescale": {
+            "description": "CFG rescale",
+            "hint": "Range: 0–1. Adjusts output at high CFG values; 0 disables rescaling."
+          },
+          "img2img_strength": {
+            "description": "Image-to-image strength",
+            "hint": "Range: 0–1. Used only when a reference image is provided. Higher values usually diverge more from the original. Only one reference is supported per request."
+          },
+          "img2img_noise": {
+            "description": "Image-to-image noise",
+            "hint": "Range: 0–1. Used only when a reference image is provided."
+          }
+        },
         "volcengine_ark": {
           "name": "Volcengine Ark API",
           "hint": "Calls Volcengine Ark image API /api/v3/images/generations.",

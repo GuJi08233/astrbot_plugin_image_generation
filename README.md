@@ -11,7 +11,7 @@
 ## 功能
 
 - 多供应商配置：一个插件中配置多个生图服务，每个供应商可独立设置 API Key、Base URL、代理、模型列表和模型能力。
-- 多适配器支持：内置 Gemini、OpenAI Chat、OpenAI Images、火山方舟、Gitee AI、硅基流动、Agnes AI、Jimeng2API、Grok 和自定义 HTTP 接口。
+- 多适配器支持：内置 Gemini、OpenAI Chat、OpenAI Images、NovelAI、火山方舟、Gitee AI、硅基流动、Agnes AI、Jimeng2API、Grok 和自定义 HTTP 接口。
 - 文生图与图生图：自动收集消息图片、引用消息图片、@ 用户头像和人设参考图；模型不支持图生图时会自动忽略参考图。
 - 模型动态切换：通过指令查看和切换模型。
 - 多图任务：单个任务可生成多张图片，支持请求级并发、任务级队列和分批发送。
@@ -42,6 +42,7 @@
 | `gemini`              | Gemini 原生 `generateContent`                                  |   ✅    |   ✅    |    ✅     | Gemini 原生图像生成接口。                                                                       |
 | `openai_chat`         | OpenAI 兼容 `chat/completions`                                 |   ✅    |   ✅    |    ❌     | 通用 Chat Completions 图像生成接口，可配置提示词前缀、输出模态和额外请求体。                    |
 | `openai`              | OpenAI Images API `/v1/images/generations`、`/v1/images/edits` |   ✅    |   ✅    |    ✅     | DALL-E / GPT Image 系列；图生图仅 GPT Image 系列支持。                                          |
+| `novelai`             | NovelAI 原生 JSON `/v1/nai/generate-image`                    |   ✅    |   ✅    |    ✅     | 单参考图图生图，自动组装 V4 提示词；支持宽高比与显式宽高，不使用全局分辨率，详见 [NovelAI 接口配置](docs/novelai.md)。 |
 | `volcengine_ark`      | 火山方舟 Images Generations `/api/v3/images/generations`       |   ✅    |   ✅    |    ✅     | Seedream 系列；按模型能力发送水印、提示词优化、组图与联网搜索（5.0 Pro 自动跳过不支持参数）。   |
 | `gitee_ai`            | Gitee AI `/v1/images/generations`、`/v1/images/edits`          |   ✅    |   ✅    |    ✅     | Gitee AI 通用图像接口，可自动或手动选择生成/编辑接口。                                          |
 | `siliconflow_adapter` | SiliconFlow Images API `/v1/images/generations`                |   ✅    |   ✅    |    ✅     | 支持 Kolors、Qwen-Image、Qwen-Image-Edit、Z-Image，并可配置反向提示词、步数和提示词遵循强度。   |
@@ -53,6 +54,7 @@
 | `custom_http`         | 用户自定义 HTTP JSON 接口                                      |   ✅    |   ✅    |    ✅     | 高级接口模板，详见 [自定义 HTTP 接口配置](docs/custom-http.md)。                                |
 
 > 能力开关以“模型能力”配置为准。未勾选的能力不会在请求中使用，LLM 工具参数也会按当前适配器能力动态隐藏。
+> NovelAI 图生图最多接收一张参考图；消息、引用、头像与人设收集后的参考图超过一张时会报错。
 
 ## 配置
 
@@ -71,7 +73,7 @@
 | 供应商名称   | 供应商显示名，也是模型格式 `供应商名称/模型名称` 的前半部分。 |
 | 接口地址     | 供应商接口地址。多数适配器可留默认值或填写中转地址。          |
 | 代理地址     | HTTP 代理，例如 `http://127.0.0.1:7890`。                     |
-| API 密钥     | API Key 或 Token 列表；多个 Key 会自动轮询和重试。            |
+| API 密钥     | API Key 或 Token 列表；Key 轮换与重试方式由适配器决定。NovelAI 单次生成及重试固定使用同一 Key。 |
 | 可用模型列表 | `/生图模型` 中展示和切换的模型列表。                          |
 | 模型能力     | 按实际模型能力勾选文生图、图生图、宽高比、分辨率。            |
 | 超时时间覆盖 | 单个供应商的超时时间；填 0 使用“运行控制”中的默认超时。       |
@@ -81,6 +83,7 @@
 
 - `openai_chat`：可配置提示词前缀、`modalities` 和额外请求体 JSON。
 - `openai`：可选择模型系列，`auto` 会按模型名识别 GPT Image 或 DALL-E 请求格式；文生图默认可使用 SSE，不支持流式的兼容站点可关闭该开关。GPT Image 可选择 png/jpeg/webp 输出格式，默认 png。
+- `novelai`：使用原生请求结构调用 `/v1/nai/generate-image` 并解析 JSON Base64 图片，支持文生图与单参考图图生图；可配置宽高、步数、采样器、CFG、种子、负向提示词、噪声调度、CFG 重缩放和图生图强度/噪声。默认服务为 `https://nai.rinko.ai`，超时为 330 秒，最大尝试次数为 1；重试固定使用同一 API Key、请求体和幂等键，409 不补发。V4 提示词结构自动组装，不接 ZIP/MessagePack；详见 [NovelAI 接口配置](docs/novelai.md)。
 - `volcengine_ark`：可配置水印、组图模式、最大参考图数量、提示词优化模式和联网搜索；Seedream 5.0 Pro 会自动跳过组图与联网搜索参数，并将参考图上限限制为 10。
 - `gitee_ai`：可通过图像接口模式自动或手动选择 `generations` / `edits`。
 - `siliconflow_adapter`：可配置反向提示词、推理步数和提示词遵循强度。

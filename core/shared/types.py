@@ -20,6 +20,7 @@ class AdapterType(str, enum.Enum):
     GROK = "grok"
     CODEX_RESPONSES = "codex_responses"
     MODELSCOPE = "modelscope"
+    NOVELAI = "novelai"
     CUSTOM_HTTP = "custom_http"
 
 

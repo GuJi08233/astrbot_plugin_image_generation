@@ -87,7 +87,11 @@ class ConfigProviderParserMixin:
             base_url=self._clean_base_url(
                 base_url,
                 preserve_version_path=adapter_type
-                in {AdapterType.CUSTOM_HTTP, AdapterType.CODEX_RESPONSES},
+                in {
+                    AdapterType.CUSTOM_HTTP,
+                    AdapterType.CODEX_RESPONSES,
+                    AdapterType.NOVELAI,
+                },
             ),
             api_keys=self._parse_string_list(provider_item.get("api_keys", [])),
             available_models=self._parse_string_list(

@@ -312,6 +312,185 @@
           }
         }
       },
+      "novelai": {
+        "name": "NovelAI 原生 JSON 接口",
+        "hint": "使用 NovelAI 原生请求结构调用 /v1/nai/generate-image；支持文生图与单参考图图生图，返回 JSON Base64 图片。",
+        "display_item": "name",
+        "hide_hint_in_list": true,
+        "items": {
+          "name": {
+            "description": "供应商名称",
+            "hint": "用于显示和模型选择；格式为“供应商名称/模型名称”。",
+            "type": "string",
+            "default": "NovelAI"
+          },
+          "base_url": {
+            "description": "接口地址",
+            "hint": "默认使用 https://nai.rinko.ai，调用 /v1/nai/generate-image；需要支持原生请求体和 JSON 图片响应的兼容服务。",
+            "type": "string",
+            "default": "https://nai.rinko.ai"
+          },
+          "proxy": {
+            "description": "代理地址",
+            "hint": "可选，示例：http://127.0.0.1:7890。",
+            "type": "string",
+            "default": ""
+          },
+          "api_keys": {
+            "description": "API 密钥",
+            "hint": "填写该服务的 API Key 或 Token（例如 ynai-…）；单次生成及重试固定使用同一个 Key。",
+            "type": "list",
+            "default": []
+          },
+          "available_models": {
+            "description": "可用模型列表",
+            "hint": "用于 /生图模型 命令切换；请按账号实际可用模型维护。V4 / V4.5 提示词结构由适配器自动组装。",
+            "type": "list",
+            "default": [
+              "nai-diffusion-4-5-full",
+              "nai-diffusion-4-5-curated"
+            ]
+          },
+          "capability_options": {
+            "description": "模型能力",
+            "hint": "支持文生图、单参考图图生图和宽高比；全局分辨率不生效，图片尺寸由下方宽高配置或请求宽高比决定。",
+            "type": "list",
+            "options": [
+              "文生图",
+              "图生图",
+              "宽高比"
+            ],
+            "default": [
+              "文生图",
+              "图生图",
+              "宽高比"
+            ]
+          },
+          "timeout": {
+            "description": "超时时间覆盖（秒）",
+            "hint": "推荐 330 秒，覆盖服务端最长 300 秒生成时间；填 0 使用运行控制的超时。超时后请在服务端生成日志核对任务状态。",
+            "type": "int",
+            "slider": {
+              "min": 0,
+              "max": 600,
+              "step": 10
+            },
+            "default": 330
+          },
+          "max_retry_attempts": {
+            "description": "最大尝试次数覆盖",
+            "hint": "默认 1 表示仅发送一次；填 0 使用运行控制的设置。仅传输异常重试，复用同一幂等键、请求体和 API Key；HTTP 错误与无效结果不重发，需在服务端核对原任务。",
+            "type": "int",
+            "slider": {
+              "min": 0,
+              "max": 10,
+              "step": 1
+            },
+            "default": 1
+          },
+          "width": {
+            "description": "默认图片宽度",
+            "hint": "宽高比不指定时使用此尺寸；范围 64–2048，必须是 64 的倍数，宽×高不能超过 3,145,728 像素。",
+            "type": "int",
+            "slider": {
+              "min": 64,
+              "max": 2048,
+              "step": 64
+            },
+            "default": 832
+          },
+          "height": {
+            "description": "默认图片高度",
+            "hint": "宽高比不指定时使用此尺寸；范围 64–2048，必须是 64 的倍数，宽×高不能超过 3,145,728 像素。",
+            "type": "int",
+            "slider": {
+              "min": 64,
+              "max": 2048,
+              "step": 64
+            },
+            "default": 1216
+          },
+          "steps": {
+            "description": "采样步数",
+            "hint": "范围 1–50；具体价格和免费渲染条件以服务端为准。",
+            "type": "int",
+            "slider": {
+              "min": 1,
+              "max": 50,
+              "step": 1
+            },
+            "default": 28
+          },
+          "sampler": {
+            "description": "采样器",
+            "hint": "填写模型支持的原生 sampler 名称，例如 k_euler_ancestral。",
+            "type": "string",
+            "default": "k_euler_ancestral"
+          },
+          "scale": {
+            "description": "提示词遵循强度（CFG）",
+            "hint": "范围 0–10；数值越高通常越遵循提示词。",
+            "type": "float",
+            "slider": {
+              "min": 0,
+              "max": 10,
+              "step": 0.1
+            },
+            "default": 5.0
+          },
+          "seed": {
+            "description": "随机种子",
+            "hint": "-1 表示每次生成随机种子；固定非负整数可用于复现相同参数。重试保持同一个种子。",
+            "type": "int",
+            "default": -1
+          },
+          "negative_prompt": {
+            "description": "负向提示词",
+            "hint": "可选，用于描述希望避免的内容；V4 / V4.5 的负向提示词结构会自动组装，不自动追加质量标签或 UC 预设。",
+            "type": "text",
+            "default": ""
+          },
+          "noise_schedule": {
+            "description": "噪声调度",
+            "hint": "填写模型与采样器支持的 noise_schedule，例如 karras、exponential 或 polyexponential。",
+            "type": "string",
+            "default": "karras"
+          },
+          "cfg_rescale": {
+            "description": "CFG 重缩放",
+            "hint": "范围 0–1；用于调整高 CFG 下的输出，0 表示不重缩放。",
+            "type": "float",
+            "slider": {
+              "min": 0,
+              "max": 1,
+              "step": 0.01
+            },
+            "default": 0.0
+          },
+          "img2img_strength": {
+            "description": "图生图重绘强度",
+            "hint": "范围 0–1，仅有参考图时生效；值越高通常越偏离原图。一次仅支持一张参考图。",
+            "type": "float",
+            "slider": {
+              "min": 0,
+              "max": 1,
+              "step": 0.01
+            },
+            "default": 0.7
+          },
+          "img2img_noise": {
+            "description": "图生图噪声",
+            "hint": "范围 0–1，仅有参考图时生效。",
+            "type": "float",
+            "slider": {
+              "min": 0,
+              "max": 1,
+              "step": 0.01
+            },
+            "default": 0.0
+          }
+        }
+      },
       "volcengine_ark": {
         "name": "火山方舟接口",
         "hint": "调用火山方舟图像接口 /api/v3/images/generations。",

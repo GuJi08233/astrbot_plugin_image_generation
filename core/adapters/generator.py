@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from astrbot.api import logger
 
+from ..generation.image_utils import convert_images_batch
 from ..shared.logging import format_cn_log_fields, log_prefix, safe_log_text
 from ..shared.types import (
     AdapterConfig,
@@ -10,7 +11,6 @@ from ..shared.types import (
     GenerationResult,
     ImageData,
 )
-from ..generation.image_utils import convert_images_batch
 
 
 class ImageGenerator:
@@ -31,6 +31,7 @@ class ImageGenerator:
             GrokAdapter,
             Jimeng2APIAdapter,
             ModelScopeAdapter,
+            NovelAIAdapter,
             OpenAIAdapter,
             OpenAIChatAdapter,
             SiliconFlowAdapter,
@@ -49,6 +50,7 @@ class ImageGenerator:
             AdapterType.GROK: GrokAdapter,
             AdapterType.CODEX_RESPONSES: CodexResponsesAdapter,
             AdapterType.MODELSCOPE: ModelScopeAdapter,
+            AdapterType.NOVELAI: NovelAIAdapter,
             AdapterType.CUSTOM_HTTP: CustomHTTPAdapter,
         }
 
