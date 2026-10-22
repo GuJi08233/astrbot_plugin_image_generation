@@ -328,7 +328,11 @@ class NovelAIAdapter(BaseImageAdapter):
         if not isinstance(data, dict) or data.get("error"):
             return None, f"{RESPONSE_ERROR}: generation returned an error"
         job = data.get("job")
-        if isinstance(job, dict) and job.get("status") not in (None, "succeeded"):
+        status = job.get("status") if isinstance(job, dict) else None
+        if isinstance(status, str):
+            status = status.strip().lower()
+        # YesNovelAI reports successful, settled generations as "charged".
+        if status not in (None, "succeeded", "charged"):
             return None, f"{RESPONSE_ERROR}: job did not succeed"
         encoded_images = data.get("images")
         if not isinstance(encoded_images, list) or len(encoded_images) != 1:

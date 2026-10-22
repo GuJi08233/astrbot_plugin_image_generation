@@ -423,6 +423,84 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(result.error)
                 self.session.post.assert_called_once()
 
+    async def test_completed_job_status_variants_return_valid_image(self):
+        jobs = (
+            None,
+            {},
+            {"status": None},
+            {"status": "succeeded"},
+            {"status": "charged"},
+            {"status": " SUCCEEDED "},
+            {"status": "  ChArGeD\t"},
+        )
+        for job in jobs:
+            with self.subTest(job=job):
+                body = {"images": [self.image_base64]}
+                if job is not None:
+                    body["job"] = job
+                self._set_response(body)
+                self.session.post.reset_mock()
+
+                result = await self.adapter.generate(
+                    self.GenerationRequest(prompt="1girl")
+                )
+
+                self.assertIsNone(result.error)
+                self.assertEqual(result.images, [self.image_bytes])
+                self.session.post.assert_called_once()
+
+    async def test_noncompleted_or_invalid_job_status_fails_without_retry(self):
+        statuses = (
+            "failed",
+            " FAILED ",
+            "pending",
+            "running",
+            "unknown",
+            "",
+            "   ",
+            0,
+            1,
+            True,
+            False,
+            [],
+            ["charged"],
+            {},
+            {"status": "charged"},
+        )
+        for status in statuses:
+            with self.subTest(status=status):
+                self._set_response(
+                    {"job": {"status": status}, "images": [self.image_base64]}
+                )
+                self.session.post.reset_mock()
+
+                result = await self.adapter.generate(
+                    self.GenerationRequest(prompt="1girl")
+                )
+
+                self.assertIsNone(result.images)
+                self.assertTrue(result.error)
+                self.session.post.assert_called_once()
+
+    async def test_charged_job_still_requires_no_error_and_valid_image(self):
+        bodies = (
+            {"error": {"message": "generation failed"}, "images": [self.image_base64]},
+            {"images": ["invalid base64!"]},
+            {"images": [base64.b64encode(b"not-an-image").decode("ascii")]},
+        )
+        for body in bodies:
+            with self.subTest(body=body):
+                self._set_response({**body, "job": {"status": "charged"}})
+                self.session.post.reset_mock()
+
+                result = await self.adapter.generate(
+                    self.GenerationRequest(prompt="1girl")
+                )
+
+                self.assertIsNone(result.images)
+                self.assertTrue(result.error)
+                self.session.post.assert_called_once()
+
     async def test_invalid_json_is_not_retried_after_http_success(self):
         self.response.json.side_effect = json.JSONDecodeError("Invalid", "x", 0)
         self.response.read.return_value = b"not json"

@@ -97,12 +97,14 @@ V4 / V4.5 请求由适配器补齐以下原生提示词结构，用户只需填�
 {
   "job": {
     "job_id": "example-job-id",
-    "status": "succeeded"
+    "status": "charged"
   },
   "images": ["<RAW_IMAGE_BASE64>"],
   "image_format": "png"
 }
 ```
+
+YesNovelAI 的实际成功响应使用 `job.status: "charged"` 表示生成成功并已结算，适配器同时兼容文档中的 `"succeeded"`，忽略状态字符串的大小写和前后空白。返回状态时，只接受这两个成功状态；缺少状态时仍兼容直接返回图片的响应。图片必须能够完整解码，失败、处理中或未知状态不会因为包含图片而被接受。
 
 返回的图片随后进入插件统一的审核、保存与发送流程。填写 NovelAI 官方 ZIP 接口或仅支持 OpenAI Images 请求结构的地址无法替代此 JSON 接口。
 
@@ -115,3 +117,5 @@ Text-to-image requests use `action: "generate"`. A single reference image select
 The default dimensions are `832×1216`. Each dimension must be a multiple of `64` within `64–2048`, and the total area must not exceed `3,145,728` pixels. An explicit aspect ratio recalculates dimensions from the configured pixel area and rounds each dimension to a multiple of `64`; out-of-range results are rejected before generation. The global resolution setting is ignored.
 
 Keep the recommended timeout of `330` seconds and maximum attempt count of `1`. Only transport errors are retried, with the same token, seed, payload and idempotency key. HTTP errors and invalid image results are not resubmitted. A `409` stops retries because the service does not replay a previous response. Check the server generation log after a timeout, cancellation or duplicate-request error before submitting a new task. Image-to-image requests and other paid options follow the service’s pricing rules.
+
+YesNovelAI returns `job.status: "charged"` for successful, settled generations. The adapter also accepts the documented `"succeeded"` state, ignoring case and surrounding whitespace, and still requires a fully decodable image. Failed, pending, or unknown states are rejected even if an image is present.
