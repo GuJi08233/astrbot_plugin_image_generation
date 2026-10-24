@@ -50,6 +50,7 @@ from .models import (
     ImageAuditSettings,
     PersonaTemplate,
     PluginConfig,
+    PresetTemplate,
     PromptAuditSettings,
     SafetyAuditSettings,
     UsageSettings,
@@ -73,6 +74,7 @@ __all__ = (
     "ImageAuditSettings",
     "PersonaTemplate",
     "PluginConfig",
+    "PresetTemplate",
     "PromptAuditSettings",
     "SafetyAuditSettings",
     "UsageSettings",
@@ -103,6 +105,10 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
         user_limits_cfg = self._get_config_section("user_limits")
         safety_cfg = self._get_config_section("safety_audit")
         prompt_templates_cfg = self._get_config_section("prompt_templates")
+        if migrated := self.migrate_legacy_presets():
+            logger.info(
+                f"{LOG} 已将 {migrated} 个旧版预设迁移到预设模板，旧配置保持不变"
+            )
         generation_task_history_cfg = self._get_config_section(
             "generation_task_history"
         )
@@ -127,7 +133,10 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
                 generation_task_history_cfg,
             ),
             safety_audit_settings=self._parse_safety_audit_settings(safety_cfg),
-            presets=self._load_presets(prompt_templates_cfg.get("presets", [])),
+            presets=self._load_presets(
+                prompt_templates_cfg.get("presets", []),
+                prompt_templates_cfg.get("preset_templates", []),
+            ),
             personas=self._load_personas(prompt_templates_cfg.get("personas", [])),
             prompt_body_template_match=self._parse_prompt_body_template_match(
                 prompt_templates_cfg
@@ -485,7 +494,7 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
         return self._plugin_config.adapter_config
 
     @property
-    def presets(self) -> dict[str, Any]:
+    def presets(self) -> dict[str, PresetTemplate]:
         """Return configured prompt presets."""
         return self._plugin_config.presets
 
@@ -504,7 +513,7 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
         """Return whether any prompt-body template matching is enabled."""
         return bool(self._plugin_config.prompt_body_template_match)
 
-    def prompt_body_presets(self) -> dict[str, Any]:
+    def prompt_body_presets(self) -> dict[str, PresetTemplate]:
         """Return presets scanned in prompt body, or empty when disabled."""
         selected = self._plugin_config.prompt_body_template_match
         if PROMPT_BODY_MATCH_PRESET not in selected:

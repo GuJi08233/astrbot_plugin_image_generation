@@ -30,7 +30,7 @@ from .core.config.templates import format_template_summary
 from .core.generation.context_image_cache import RecentContextImageCache
 from .core.generation.executor import GenerationExecutor
 from .core.generation.image_processor import ImageProcessor
-from .core.generation.options import parse_generation_options
+from .core.generation.options import is_explicit_size, parse_generation_options
 from .core.generation.quoted_text import collect_quoted_text, has_quoted_text_source
 from .core.generation.reference_collector import collect_command_reference_images
 from .core.llm.result_handler import LLMResultHandler
@@ -589,12 +589,12 @@ class ImageGenerationPlugin(CommandHandlerMixin, Star):
             resolution,
             matched_presets,
             matched_personas,
-            persona_images,
+            template_images,
         ) = self._parse_command_prompt_templates(prompt, aspect_ratio, resolution)
-        if options.aspect_ratio is not None:
-            aspect_ratio = options.aspect_ratio
-        if options.resolution is not None:
-            resolution = options.resolution
+        if is_explicit_size(options.aspect_ratio):
+            aspect_ratio = str(options.aspect_ratio)
+        if is_explicit_size(options.resolution):
+            resolution = str(options.resolution)
         preset_or_persona, preset_label = format_template_summary(
             matched_presets,
             matched_personas,
@@ -668,7 +668,7 @@ class ImageGenerationPlugin(CommandHandlerMixin, Star):
                     images_data = await collect_command_reference_images(
                         self.image_processor,
                         event,
-                        persona_images,
+                        template_images,
                         task_id=task_id,
                     )
                 except asyncio.CancelledError:
@@ -808,11 +808,16 @@ class ImageGenerationPlugin(CommandHandlerMixin, Star):
             preset_list = []
             if self.config_manager.presets:
                 preset_list.append("📋 预设列表:")
-            for idx, (name, prompt) in enumerate(
+            for idx, (name, preset) in enumerate(
                 self.config_manager.presets.items(), 1
             ):
-                display = prompt[:20] + "..." if len(prompt) > 20 else prompt
-                preset_list.append(f"{idx}. {name}: {display}")
+                display = (
+                    preset.prompt[:20] + "..."
+                    if len(preset.prompt) > 20
+                    else preset.prompt
+                )
+                image_mark = "有参考图" if preset.image else "无参考图"
+                preset_list.append(f"{idx}. {name}: {display} [{image_mark}]")
 
             if self.config_manager.personas:
                 if preset_list:

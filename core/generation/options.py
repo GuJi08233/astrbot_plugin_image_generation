@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import re
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
-from ..shared.constants import SUPPORTED_ASPECT_RATIOS, SUPPORTED_RESOLUTIONS
+from ..shared.constants import (
+    SUPPORTED_ASPECT_RATIOS,
+    SUPPORTED_RESOLUTIONS,
+    UNSPECIFIED_OPTION,
+)
 
 
 class GenerationOptions(NamedTuple):
@@ -95,6 +99,21 @@ def split_trailing_count_token(prompt: str) -> tuple[str, str | None]:
     if re.search(rf"(?:{_KEY})\s*(?:为|是|[:：=])?\s*$", prefix):
         return raw_prompt, None
     return prefix.strip(), last
+
+
+def is_explicit_size(value: Any) -> bool:
+    """Return whether a size value should override preset template values.
+
+    ``不指定`` means "send no size field", so it must not block a preset value.
+
+    Args:
+        value: Aspect ratio or resolution from a command, tool, or API caller.
+
+    Returns:
+        True when the value is a concrete user-provided size.
+    """
+    text = str(value or "").strip()
+    return bool(text) and text != UNSPECIFIED_OPTION
 
 
 def parse_generation_options(prompt: str) -> GenerationOptions:

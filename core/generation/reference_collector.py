@@ -30,7 +30,7 @@ MAX_CONTEXT_IMAGE_SCAN_MESSAGES = 20
 # | Replied image | yes | only with use_context_images | no |
 # | Mention avatar | yes | only avatar_references IDs | no |
 # | Explicit URL/path | no | reference_images | no |
-# | Persona image | supplied names | supplied names | no |
+# | Preset/persona image | supplied names | supplied names | no |
 # | Recent context cache | no | fallback for use_context_images | owner |
 
 
@@ -194,26 +194,37 @@ def deduplicate_reference_images(
     return unique_images
 
 
-async def collect_reference_images_from_personas(
+async def collect_reference_images_from_templates(
     image_processor: ImageProcessor,
-    persona_images: list[tuple[str, str]],
+    template_images: list[tuple[str, str]],
     *,
     task_id: str | None = None,
     log_context: str = "Reference",
     workspace_dir: str | None = None,
 ) -> list[ImageData]:
-    """Download all configured persona reference images."""
+    """Download all configured preset and persona reference images.
+
+    Args:
+        image_processor: Image processor used to download or read each image.
+        template_images: ``(label, reference)`` pairs in application order.
+        task_id: Optional task id used in log prefixes.
+        log_context: Log prefix context name.
+        workspace_dir: Workspace directory used to allow local file reads.
+
+    Returns:
+        Downloaded reference images; failed entries are only logged.
+    """
     images_data: list[ImageData] = []
     task_log = log_prefix(log_context, task_id) if task_id else LOG
-    for persona_name, persona_image in persona_images:
-        if persona_image_data := await image_processor.download_image(
-            persona_image,
+    for template_label, template_image in template_images:
+        if image_data := await image_processor.download_image(
+            template_image,
             workspace_dir=workspace_dir,
         ):
-            images_data.append(persona_image_data)
+            images_data.append(image_data)
         else:
             logger.warning(
-                f"{task_log} 人设参考图获取失败: {safe_log_text(persona_name)}"
+                f"{task_log} 参考图获取失败: {safe_log_text(template_label)}"
             )
     return images_data
 
@@ -246,17 +257,17 @@ async def download_reference_images(
 async def collect_command_reference_images(
     image_processor: ImageProcessor,
     event: AstrMessageEvent,
-    persona_images: list[tuple[str, str]],
+    template_images: list[tuple[str, str]],
     *,
     task_id: str,
 ) -> list[ImageData]:
-    """Collect command persona and message reference images."""
+    """Collect command template and message reference images."""
     workspace_dir = image_processor.workspace_dir_for_origin(
         getattr(event, "unified_msg_origin", None)
     )
-    images_data = await collect_reference_images_from_personas(
+    images_data = await collect_reference_images_from_templates(
         image_processor,
-        persona_images,
+        template_images,
         task_id=task_id,
         log_context="Task",
         workspace_dir=workspace_dir,
@@ -279,17 +290,17 @@ async def collect_tool_reference_images(
     cached_context_images: list[ImageData] | None = None,
     use_context_images: bool = False,
     avatar_references: Any = None,
-    persona_images: list[tuple[str, str]] | None = None,
+    template_images: list[tuple[str, str]] | None = None,
     task_id: str | None = None,
 ) -> list[ImageData]:
-    """Collect LLM tool message, persona, URL/path, and avatar reference images."""
+    """Collect LLM tool message, template, URL/path, and avatar reference images."""
     task_log = log_prefix("LLMTool", task_id) if task_id else LOG
     if not (capabilities & ImageCapability.IMAGE_TO_IMAGE):
         if (
             reference_images
             or use_context_images
             or avatar_references
-            or persona_images
+            or template_images
         ):
             logger.warning(f"{task_log} 当前适配器不支持参考图，已忽略工具参考图参数")
         return []
@@ -323,11 +334,11 @@ async def collect_tool_reference_images(
         if not context_source_images:
             raise ContextReferenceImageNotFoundError
 
-    if persona_images:
+    if template_images:
         images_data.extend(
-            await collect_reference_images_from_personas(
+            await collect_reference_images_from_templates(
                 image_processor,
-                persona_images,
+                template_images,
                 task_id=task_id,
                 log_context="LLMTool",
                 workspace_dir=workspace_dir,

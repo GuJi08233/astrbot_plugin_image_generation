@@ -10,7 +10,7 @@ from .image_utils import (
 )
 from .reference_collector import (
     collect_command_reference_images,
-    collect_reference_images_from_personas,
+    collect_reference_images_from_templates,
     collect_tool_reference_images,
     deduplicate_reference_images,
     download_reference_images,
@@ -32,7 +32,7 @@ __all__ = (
     "GenerationExecutor",
     "ImageProcessor",
     "collect_command_reference_images",
-    "collect_reference_images_from_personas",
+    "collect_reference_images_from_templates",
     "collect_tool_reference_images",
     "convert_image_format",
     "convert_images_batch",

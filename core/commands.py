@@ -77,12 +77,12 @@ class CommandHandlerMixin:
 
         Args:
             prompt: Command prompt after image-count suffix parsing.
-            aspect_ratio: Current aspect ratio, updated by JSON presets.
-            resolution: Current resolution, updated by JSON presets.
+            aspect_ratio: Current aspect ratio, updated by preset templates.
+            resolution: Current resolution, updated by preset templates.
 
         Returns:
             Final prompt, aspect ratio, resolution, matched preset names,
-            matched persona names, and persona reference images.
+            matched persona names, and template reference images.
         """
         raw_prompt = prompt.strip()
         if not raw_prompt:
@@ -97,7 +97,7 @@ class CommandHandlerMixin:
                 persona_prompts,
                 matched_presets,
                 matched_personas,
-                persona_images,
+                template_images,
             ) = extract_templates_from_prompt(
                 raw_prompt,
                 self.config_manager.prompt_body_presets(),
@@ -117,7 +117,7 @@ class CommandHandlerMixin:
                 resolution,
                 matched_presets,
                 matched_personas,
-                persona_images,
+                template_images,
             )
 
         tokens = raw_prompt.split()
@@ -135,14 +135,19 @@ class CommandHandlerMixin:
             extra_content = " ".join(tokens[index:]).strip()
             break
 
-        preset_prompts, aspect_ratio, resolution, matched_presets, _, _ = (
-            resolve_named_templates(
-                preset_names,
-                self.config_manager.presets,
-                kind="preset",
-                aspect_ratio=aspect_ratio,
-                resolution=resolution,
-            )
+        (
+            preset_prompts,
+            aspect_ratio,
+            resolution,
+            matched_presets,
+            preset_images,
+            _,
+        ) = resolve_named_templates(
+            preset_names,
+            self.config_manager.presets,
+            kind="preset",
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
         )
         persona_prompts, _, _, matched_personas, persona_images, _ = (
             resolve_named_templates(
@@ -167,7 +172,7 @@ class CommandHandlerMixin:
             resolution,
             matched_presets,
             matched_personas,
-            persona_images,
+            [*preset_images, *persona_images],
         )
 
     def format_start_task_message(

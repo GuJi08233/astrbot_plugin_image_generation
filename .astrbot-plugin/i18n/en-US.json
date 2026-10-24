@@ -997,8 +997,38 @@
       "description": "Prompt templates",
       "hint": "Centrally configure preset prompts and persona templates. View them with /预设 and use them by name with /生图. By default, only leading consecutive names are matched.",
       "presets": {
-        "description": "Preset prompts",
-        "hint": "Each item uses the format \"name:prompt\". JSON objects with prompt, aspect_ratio, resolution, and description are also supported."
+        "description": "Preset prompts (legacy)",
+        "hint": "Legacy preset configuration kept only for upgrades. Use \"Preset templates\" instead; entries here are still read by the plugin."
+      },
+      "preset_templates": {
+        "description": "Preset templates",
+        "hint": "Configure reusable presets: prompt, aspect ratio, resolution, and reference image. Applied from leading /生图 names or explicit preset parameters, and matched in the prompt body when body matching is enabled.",
+        "templates": {
+          "preset": {
+            "name": "Preset",
+            "hint": "Reusable image generation preset.",
+            "preset_name": {
+              "description": "Preset name",
+              "hint": "Used to match leading /生图 names, explicit preset parameters, and optional prompt-body matching."
+            },
+            "preset_prompt": {
+              "description": "Preset prompt",
+              "hint": "Appended to the prompt when generating images with this preset."
+            },
+            "preset_aspect_ratio": {
+              "description": "Aspect ratio",
+              "hint": "Optional. Applied when this preset matches; an explicitly requested aspect ratio wins."
+            },
+            "preset_resolution": {
+              "description": "Resolution",
+              "hint": "Optional. Applied when this preset matches; an explicitly requested resolution wins."
+            },
+            "preset_image": {
+              "description": "Preset reference image",
+              "hint": "Optional. Used as an image-to-image reference image."
+            }
+          }
+        }
       },
       "personas": {
         "description": "Persona templates",

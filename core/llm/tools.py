@@ -20,11 +20,13 @@ from ..config.templates import (
     extract_templates_from_prompt,
     find_named_entry,
     format_template_summary,
+    parse_preset_content,
     resolve_named_templates,
 )
 from ..config.templates import (
     normalize_name_items as _normalize_name_items,
 )
+from ..generation.options import is_explicit_size
 from ..generation.reference_collector import (
     ContextReferenceImageNotFoundError,
     collect_tool_reference_images,
@@ -51,6 +53,7 @@ from .preset_text import (
     normalize_preset_edit_action,
     normalize_preset_query_category,
     normalize_task_action,
+    validate_preset_options,
 )
 
 LOG = log_prefix("LLMTool")
@@ -90,7 +93,7 @@ async def _start_generation_task(
     cached_context_images: list[ImageData] | None = None,
     use_context_images: bool = False,
     avatar_references: Any = None,
-    persona_images: list[tuple[str, str]] | None = None,
+    template_images: list[tuple[str, str]] | None = None,
     preset_or_persona: str | None = None,
     preset_label: str = "预设",
     presets: list[str] | None = None,
@@ -158,7 +161,7 @@ async def _start_generation_task(
                 cached_context_images=cached_context_images,
                 use_context_images=use_context_images,
                 avatar_references=avatar_references,
-                persona_images=persona_images,
+                template_images=template_images,
                 task_id=task_id,
             )
         except ContextReferenceImageNotFoundError:
@@ -321,19 +324,23 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
 
         prompt = str(kwargs.get("prompt", "") or "").strip()
         raw_aspect_ratio = kwargs.get("aspect_ratio")
+        raw_resolution = kwargs.get("resolution")
         aspect_ratio = raw_aspect_ratio or plugin.config_manager.default_aspect_ratio
-        resolution = (
-            kwargs.get("resolution") or plugin.config_manager.default_resolution
-        )
+        resolution = raw_resolution or plugin.config_manager.default_resolution
 
-        preset_prompts, aspect_ratio, resolution, matched_presets, _, error = (
-            resolve_named_templates(
-                normalize_name_items(kwargs.get("preset")),
-                plugin.config_manager.presets,
-                kind="preset",
-                aspect_ratio=str(aspect_ratio),
-                resolution=str(resolution),
-            )
+        (
+            preset_prompts,
+            aspect_ratio,
+            resolution,
+            matched_presets,
+            preset_images,
+            error,
+        ) = resolve_named_templates(
+            normalize_name_items(kwargs.get("preset")),
+            plugin.config_manager.presets,
+            kind="preset",
+            aspect_ratio=str(aspect_ratio),
+            resolution=str(resolution),
         )
         if error:
             return f"❌ {error}"
@@ -348,6 +355,7 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
         )
         if error:
             return f"❌ {error}"
+        template_images = [*preset_images, *persona_images]
         if plugin.config_manager.match_templates_in_prompt_body:
             (
                 prompt,
@@ -357,7 +365,7 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
                 extra_persona_prompts,
                 extra_presets,
                 extra_personas,
-                extra_persona_images,
+                extra_template_images,
             ) = extract_templates_from_prompt(
                 prompt,
                 plugin.config_manager.prompt_body_presets(),
@@ -370,7 +378,11 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
             persona_prompts.extend(extra_persona_prompts)
             matched_presets.extend(extra_presets)
             matched_personas.extend(extra_personas)
-            persona_images.extend(extra_persona_images)
+            template_images.extend(extra_template_images)
+        if is_explicit_size(raw_aspect_ratio):
+            aspect_ratio = raw_aspect_ratio
+        if is_explicit_size(raw_resolution):
+            resolution = raw_resolution
         prompt = build_generation_prompt(
             preset_prompts=preset_prompts,
             persona_prompts=persona_prompts,
@@ -440,7 +452,7 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
             cached_context_images=cached_context_images,
             use_context_images=use_context_images,
             avatar_references=kwargs.get("avatar_references"),
-            persona_images=persona_images,
+            template_images=template_images,
             preset_or_persona=preset_or_persona,
             preset_label=preset_label,
             presets=matched_presets,
@@ -535,8 +547,12 @@ class PresetQueryTool(FunctionTool[AstrAgentContext]):
         if not plugin.config_manager.presets:
             return "📋 当前没有预设"
         lines = ["📋 预设列表:"]
-        for idx, preset_name in enumerate(plugin.config_manager.presets, 1):
-            lines.append(f"{idx}. {preset_name}")
+        for idx, (preset_name, preset) in enumerate(
+            plugin.config_manager.presets.items(),
+            1,
+        ):
+            image_mark = "有参考图" if preset.image else "无参考图"
+            lines.append(f"{idx}. {preset_name} [{image_mark}]")
         return "\n".join(lines)
 
 
@@ -546,10 +562,8 @@ class PresetEditTool(FunctionTool[AstrAgentContext]):
 
     name: str = "edit_image_presets"
     description: str = (
-        "创建或删除生图预设。支持两种预设格式："
-        "1) 简单格式：name + prompt，prompt 直接写普通提示词；"
-        "2) 高级 JSON 格式：prompt 写 JSON 字符串，如 "
-        '{"prompt":"提示词","aspect_ratio":"16:9","resolution":"2K","description":"描述"}。'
+        "创建或删除生图预设。预设包含提示词 preset_prompt,可选 preset_aspect_ratio、"
+        "preset_resolution 和 preset_image（参考图，支持 http(s) 图片 URL）。"
         "只编辑预设，不编辑人设。"
     )
     parameters: dict = Field(
@@ -567,7 +581,19 @@ class PresetEditTool(FunctionTool[AstrAgentContext]):
                 },
                 "prompt": {
                     "type": "string",
-                    "description": '创建预设时必填。可填写普通提示词，或填写高级 JSON 字符串：{"prompt":"提示词","aspect_ratio":"16:9","resolution":"2K","description":"描述"}。',
+                    "description": "创建预设时必填的预设提示词。",
+                },
+                "aspect_ratio": {
+                    "type": "string",
+                    "description": f"可选。预设宽高比，可选值：{'、'.join(ASPECT_RATIO_OPTIONS)}。",
+                },
+                "resolution": {
+                    "type": "string",
+                    "description": f"可选。预设分辨率，可选值：{'、'.join(RESOLUTION_OPTIONS)}。",
+                },
+                "reference_image": {
+                    "type": "string",
+                    "description": "可选。预设参考图，支持 http(s) 图片 URL；本地图片仅允许当前会话 workspace 和 AstrBot temp 目录。",
                 },
             },
             "required": ["action", "name"],
@@ -603,12 +629,25 @@ class PresetEditTool(FunctionTool[AstrAgentContext]):
             return "❌ 请提供预设名称"
 
         if action == "create_preset":
-            prompt = str(kwargs.get("prompt", "") or "").strip()
-            if not prompt:
+            content = str(kwargs.get("prompt", "") or "").strip()
+            if not content:
                 return "❌ 请提供预设内容"
-            if error := _validate_preset_content(prompt):
+            if error := _validate_preset_content(content):
                 return f"❌ {error}"
-            plugin.config_manager.save_preset(name, prompt)
+            content_prompt, content_ratio, content_resolution = parse_preset_content(
+                content
+            )
+            ratio = str(kwargs.get("aspect_ratio", "") or "").strip() or content_ratio
+            size = str(kwargs.get("resolution", "") or "").strip() or content_resolution
+            if error := validate_preset_options(ratio, size):
+                return f"❌ {error}"
+            plugin.config_manager.save_preset_template(
+                name=name,
+                prompt=content_prompt or content,
+                aspect_ratio=ratio,
+                resolution=size,
+                image=str(kwargs.get("reference_image", "") or "").strip(),
+            )
             return f"✅ 预设已保存: {name}"
 
         if action == "delete_preset":
