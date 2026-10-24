@@ -1,12 +1,11 @@
 """Preset and persona text helpers for LLM tools.
 
 These functions only normalize aliases, format query results, and validate
-preset content. Tool classes and their schemas stay in ``tools.py``.
+preset size options. Tool classes and their schemas stay in ``tools.py``.
 """
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from ..shared.constants import SUPPORTED_ASPECT_RATIOS, SUPPORTED_RESOLUTIONS
@@ -87,24 +86,3 @@ def validate_preset_options(aspect_ratio: str, resolution: str) -> str | None:
     if resolution and resolution not in RESOLUTION_OPTIONS:
         return f"预设的 resolution 不支持: {resolution}"
     return None
-
-
-def _validate_preset_content(content: str) -> str | None:
-    """Validate legacy JSON preset content written by an LLM tool."""
-    if not content.startswith("{"):
-        return None
-
-    try:
-        preset_data = json.loads(content)
-    except json.JSONDecodeError as exc:
-        return f"预设 JSON 格式错误: {exc}"
-
-    if not isinstance(preset_data, dict):
-        return "预设 JSON 必须是对象"
-    if not str(preset_data.get("prompt", "") or "").strip():
-        return "预设 JSON 必须包含非空 prompt 字段"
-
-    return validate_preset_options(
-        str(preset_data.get("aspect_ratio", "") or "").strip(),
-        str(preset_data.get("resolution", "") or "").strip(),
-    )

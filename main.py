@@ -290,7 +290,7 @@ class ImageGenerationPlugin(CommandHandlerMixin, Star):
         if persona_names := "、".join(self.config_manager.personas):
             persona_props["description"] = (
                 str(persona_props.get("description", "")).rstrip("。")
-                + f"。可用人设: {persona_names}；多个名称可用空格分隔。"
+                + f"。可用人设: {persona_names}"
             )
 
     def create_background_task(
@@ -853,7 +853,7 @@ class ImageGenerationPlugin(CommandHandlerMixin, Star):
                 if not name or not prompt:
                     yield event.plain_result("❌ 格式错误: /预设 添加 名称:内容")
                     return
-                self.config_manager.save_preset(name, prompt)
+                self.config_manager.save_preset_template(name=name, prompt=prompt)
                 yield event.plain_result(f"✅ 预设已添加: {name}")
             else:
                 yield event.plain_result("❌ 格式错误: /预设 添加 名称:内容")

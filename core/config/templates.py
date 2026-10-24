@@ -8,11 +8,32 @@ from typing import Any
 from astrbot.api import logger
 
 from ..generation.reference_collector import normalize_string_items
+from ..shared.constants import UNSPECIFIED_OPTION
 from ..shared.logging import log_prefix
 from .models import PersonaTemplate, PresetTemplate
 from .validator import TEMPLATE_KEY_FIELD
 
 LOG = log_prefix("Config")
+
+# Hidden config flag recording that legacy presets were copied into the template
+# config. Remove it together with the legacy ``presets`` list in a later release.
+PRESETS_MIGRATED_FIELD = "presets_migrated"
+
+
+def normalize_preset_size(value: Any) -> str:
+    """Return a preset size value, mapping the unset option to an empty string.
+
+    The config uses the ``不指定`` dropdown option for "do not override"; the
+    runtime model keeps an empty string for the same state.
+
+    Args:
+        value: Raw aspect ratio or resolution from config or tool arguments.
+
+    Returns:
+        The value itself, or an empty string when it means "unspecified".
+    """
+    text = str(value or "").strip()
+    return "" if text == UNSPECIFIED_OPTION else text
 
 
 def build_generation_prompt(
@@ -309,12 +330,15 @@ def extract_templates_from_prompt(
     )
 
 
-def parse_preset_content(content: Any) -> tuple[str, str, str]:
-    """Parse legacy preset content into prompt and optional size overrides.
+def parse_legacy_preset_content(content: Any) -> tuple[str, str, str]:
+    """Parse legacy ``名称:内容`` preset content into structured fields.
+
+    Only the hidden legacy preset list uses this format; every other entry
+    point writes structured preset fields directly.
 
     Args:
-        content: Preset content, either a plain prompt or a JSON object with
-            ``prompt``, ``aspect_ratio`` and ``resolution`` fields.
+        content: Legacy preset content, either a plain prompt or a JSON object
+            with ``prompt``, ``aspect_ratio`` and ``resolution`` fields.
 
     Returns:
         Prompt text, aspect ratio, and resolution. Unparsable JSON keeps the
@@ -368,34 +392,38 @@ class ConfigTemplateStoreMixin:
         self,
         presets_config: Any,
         preset_templates_config: Any,
+        *,
+        migrated: bool,
     ) -> dict[str, PresetTemplate]:
         """Load prompt presets from legacy and template configs.
 
-        Legacy ``名称:提示词`` entries are still read for upgrade compatibility,
-        while structured ``preset_templates`` entries win on name conflicts and
-        keep the legacy order for unchanged names.
+        Legacy ``名称:提示词`` entries are read only until the one-time migration
+        ran. Afterwards the template config is the single source of truth, so a
+        preset deleted from the template list is not restored from the legacy
+        field. Structured entries win on name conflicts.
 
         Args:
             presets_config: Legacy preset string list config value.
             preset_templates_config: Structured preset template config value.
+            migrated: Whether the legacy list was already migrated.
 
         Returns:
             Merged preset templates keyed by name.
         """
         presets: dict[str, PresetTemplate] = {}
-        if isinstance(presets_config, list):
+        if not migrated and isinstance(presets_config, list):
             for preset_str in presets_config:
                 if not isinstance(preset_str, str) or ":" not in preset_str:
                     continue
                 name, content = preset_str.split(":", 1)
                 name = name.strip()
-                prompt, aspect_ratio, resolution = parse_preset_content(content)
+                prompt, aspect_ratio, resolution = parse_legacy_preset_content(content)
                 if name and (prompt or aspect_ratio or resolution):
                     presets[name] = PresetTemplate(
                         name=name,
                         prompt=prompt,
-                        aspect_ratio=aspect_ratio,
-                        resolution=resolution,
+                        aspect_ratio=normalize_preset_size(aspect_ratio),
+                        resolution=normalize_preset_size(resolution),
                     )
 
         if isinstance(preset_templates_config, list):
@@ -422,8 +450,8 @@ class ConfigTemplateStoreMixin:
                     presets[name] = PresetTemplate(
                         name=name,
                         prompt=prompt,
-                        aspect_ratio=aspect_ratio,
-                        resolution=resolution,
+                        aspect_ratio=normalize_preset_size(aspect_ratio),
+                        resolution=normalize_preset_size(resolution),
                         image=image,
                     )
         return presets
@@ -431,21 +459,23 @@ class ConfigTemplateStoreMixin:
     def migrate_legacy_presets(self) -> int:
         """Copy legacy presets into the template config and return the count.
 
-        Legacy entries stay untouched so a downgrade keeps working, and only
-        names without a template entry are copied. The config file is saved once
-        when anything was copied.
+        Runs once: the hidden ``presets_migrated`` flag is set after the first
+        pass, so presets deleted from the template list afterwards are not
+        restored. Legacy entries stay untouched so a downgrade keeps working,
+        and only names without a template entry are copied.
 
         Returns:
             Number of presets copied into ``preset_templates``.
         """
         prompt_templates_cfg = self._get_writable_prompt_templates_config()
-        legacy_presets = prompt_templates_cfg.get("presets")
-        if not isinstance(legacy_presets, list):
+        if prompt_templates_cfg.get(PRESETS_MIGRATED_FIELD):
             return 0
 
-        templates = prompt_templates_cfg.get("preset_templates")
-        if not isinstance(templates, list):
-            templates = []
+        legacy_presets = prompt_templates_cfg.get("presets")
+        raw_templates = prompt_templates_cfg.get("preset_templates")
+        # Copy before appending: the config value can be the schema's default
+        # list object, which must not be mutated in place.
+        templates = list(raw_templates) if isinstance(raw_templates, list) else []
         known_names = {
             str(item.get("preset_name") or item.get("name") or "").strip().lower()
             for item in templates
@@ -453,7 +483,7 @@ class ConfigTemplateStoreMixin:
         }
 
         copied = 0
-        for preset_str in legacy_presets:
+        for preset_str in legacy_presets if isinstance(legacy_presets, list) else []:
             if not isinstance(preset_str, str) or ":" not in preset_str:
                 continue
             name, content = preset_str.split(":", 1)
@@ -461,7 +491,7 @@ class ConfigTemplateStoreMixin:
             if not name or name.lower() in known_names:
                 continue
 
-            prompt, aspect_ratio, resolution = parse_preset_content(content)
+            prompt, aspect_ratio, resolution = parse_legacy_preset_content(content)
             if not (prompt or aspect_ratio or resolution):
                 continue
 
@@ -470,17 +500,17 @@ class ConfigTemplateStoreMixin:
                     TEMPLATE_KEY_FIELD: "preset",
                     "preset_name": name,
                     "preset_prompt": prompt,
-                    "preset_aspect_ratio": aspect_ratio,
-                    "preset_resolution": resolution,
+                    "preset_aspect_ratio": normalize_preset_size(aspect_ratio),
+                    "preset_resolution": normalize_preset_size(resolution),
                     "preset_image": [],
                 }
             )
             known_names.add(name.lower())
             copied += 1
 
-        if copied:
-            prompt_templates_cfg["preset_templates"] = templates
-            self._config.save_config()
+        prompt_templates_cfg["preset_templates"] = templates
+        prompt_templates_cfg[PRESETS_MIGRATED_FIELD] = True
+        self._config.save_config()
         return copied
 
     def _get_writable_prompt_templates_config(self) -> dict[str, Any]:
@@ -501,6 +531,8 @@ class ConfigTemplateStoreMixin:
                 TEMPLATE_KEY_FIELD: "preset",
                 "preset_name": preset.name,
                 "preset_prompt": preset.prompt,
+                # Empty means "do not override", which the dashboard select
+                # shows as no selection.
                 "preset_aspect_ratio": preset.aspect_ratio,
                 "preset_resolution": preset.resolution,
                 # The file field is stored as a list, matching the dashboard.
@@ -546,22 +578,6 @@ class ConfigTemplateStoreMixin:
                     return parsed
         return ""
 
-    def save_preset(self, name: str, content: str) -> None:
-        """Save a prompt preset from simple or advanced JSON content.
-
-        Args:
-            name: Preset name to create or overwrite.
-            content: Plain prompt, or a JSON object with ``prompt``,
-                ``aspect_ratio`` and ``resolution`` fields.
-        """
-        prompt, aspect_ratio, resolution = parse_preset_content(content)
-        self.save_preset_template(
-            name=name,
-            prompt=prompt,
-            aspect_ratio=aspect_ratio,
-            resolution=resolution,
-        )
-
     def save_preset_template(
         self,
         *,
@@ -575,8 +591,8 @@ class ConfigTemplateStoreMixin:
         self._plugin_config.presets[name] = PresetTemplate(
             name=name,
             prompt=str(prompt or "").strip(),
-            aspect_ratio=str(aspect_ratio or "").strip(),
-            resolution=str(resolution or "").strip(),
+            aspect_ratio=normalize_preset_size(aspect_ratio),
+            resolution=normalize_preset_size(resolution),
             image=str(image or "").strip(),
         )
         self._save_presets_config()
@@ -584,8 +600,9 @@ class ConfigTemplateStoreMixin:
     def delete_preset(self, name: str) -> bool:
         """Delete a prompt preset and return whether it existed.
 
-        The hidden legacy entry with the same name is removed as well, so a
-        deleted preset does not reappear from the compatibility config.
+        The hidden legacy entry with the same name is removed as well, so the
+        preset is not restored if this config is ever opened by an older
+        version that still reads the legacy list.
         """
         if name not in self._plugin_config.presets:
             return False
@@ -594,30 +611,33 @@ class ConfigTemplateStoreMixin:
         prompt_templates_cfg = self._get_writable_prompt_templates_config()
         legacy_presets = prompt_templates_cfg.get("presets")
         if isinstance(legacy_presets, list):
-            lowered_name = name.strip().lower()
-            remaining = [
-                item
+            legacy_names = {
+                item.split(":", 1)[0].strip().lower()
                 for item in legacy_presets
-                if not (
-                    isinstance(item, str)
-                    and item.split(":", 1)[0].strip().lower() == lowered_name
-                )
-            ]
-            if len(remaining) != len(legacy_presets):
-                prompt_templates_cfg["presets"] = remaining
+                if isinstance(item, str) and ":" in item
+            }
+            if name.strip().lower() in legacy_names:
+                prompt_templates_cfg["presets"] = [
+                    item
+                    for item in legacy_presets
+                    if not isinstance(item, str)
+                    or ":" not in item
+                    or item.split(":", 1)[0].strip().lower() != name.strip().lower()
+                ]
 
         self._save_presets_config()
         return True
 
 
 __all__ = (
+    "PRESETS_MIGRATED_FIELD",
     "ConfigTemplateStoreMixin",
     "build_generation_prompt",
     "extract_templates_from_prompt",
     "find_named_entry",
     "format_template_summary",
     "normalize_name_items",
-    "parse_preset_content",
+    "normalize_preset_size",
     "resolve_named_templates",
     "template_image_label",
 )

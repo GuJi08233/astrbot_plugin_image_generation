@@ -20,7 +20,6 @@ from ..config.templates import (
     extract_templates_from_prompt,
     find_named_entry,
     format_template_summary,
-    parse_preset_content,
     resolve_named_templates,
 )
 from ..config.templates import (
@@ -49,7 +48,6 @@ from .preset_text import (
     RESOLUTION_OPTIONS,
     _format_persona_detail,
     _format_preset_detail,
-    _validate_preset_content,
     normalize_preset_edit_action,
     normalize_preset_query_category,
     normalize_task_action,
@@ -256,8 +254,8 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
     description: str = (
         "使用生图模型生成或修改图片；支持普通生图、多预设、自拍、人像、头像和多个人设照片。"
         "当用户要求自拍/头像/人像/某个人设或角色出镜时，应优先填写 persona。"
-        "修改用户当前消息、引用消息或此前聊天中的图片时，必须将 use_context_images 设为 true；"
-        "插件会自行取得实际图片，不要只在 prompt 中描述‘参考图’。"
+        "修改用户当前消息、引用消息或此前聊天中的图片时，必须将 use_context_images 设为 true，"
+        "不要只在 prompt 中描述‘参考图’。"
     )
     parameters: dict = Field(
         default_factory=lambda: {
@@ -265,15 +263,15 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
             "properties": {
                 "prompt": {
                     "type": "string",
-                    "description": "生图时使用的额外提示词。设置 preset 或 persona 时可留空。开启提示词正文匹配后，正文中出现的已配置名称才会自动应用。",
+                    "description": "生图时使用的额外提示词。设置 preset 或 persona 时可留空。",
                 },
                 "preset": {
                     "type": "string",
-                    "description": "可选。使用一个或多个已配置的预设名称，多个名称可用空格分隔；会按顺序拼接预设提示词，并可继承预设中的宽高比和分辨率。",
+                    "description": "可选。一个或多个已配置的预设名称，多个名称用空格分隔；预设可能自带宽高比和分辨率，无需重复指定。",
                 },
                 "persona": {
                     "type": "string",
-                    "description": "可选。使用一个或多个已配置的人设名称，多个名称可用空格分隔。当用户要求自拍、头像、人像、人设照片或某角色出镜时优先填写；会按顺序拼接人设描述，并在支持图生图时加入人设参考图。",
+                    "description": "可选。一个或多个已配置的人设名称，多个名称用空格分隔。用户要求自拍、头像、人像、人设照片或某角色出镜时优先填写。",
                 },
                 "aspect_ratio": {
                     "type": "string",
@@ -283,29 +281,29 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
                 },
                 "resolution": {
                     "type": "string",
-                    "description": "图片质量/分辨率。使用'不指定'时请求中不携带分辨率字段。",
+                    "description": "图片质量/分辨率。如果不确定，请使用'不指定'。",
                     "enum": RESOLUTION_OPTIONS,
                     "default": "不指定",
                 },
                 "image_count": {
                     "type": "integer",
-                    "description": "本次任务要生成的图片数量。不填时使用插件默认出图数量；超过配置上限时会自动截断。",
+                    "description": "本次任务要生成的图片数量。",
                     "minimum": 1,
                     "default": 1,
                 },
                 "avatar_references": {
                     "type": "array",
-                    "description": "可选。需要使用头像作为参考图时填写，'self' 表示机器人，'sender' 表示发送者，也可填写 QQ 号/用户 ID。",
+                    "description": "可选。使用头像作为参考图时填写：'self' 表示自己，'sender' 表示发送者，也可填写用户 ID。",
                     "items": {"type": "string"},
                 },
                 "reference_images": {
                     "type": "array",
-                    "description": "可选。参考图列表，支持 http(s) 网络图片 URL；本地图片仅允许当前会话 workspace和AstrBot temp 目录。",
+                    "description": "可选。参考图列表，支持 http(s) 网络图片 URL。",
                     "items": {"type": "string"},
                 },
                 "use_context_images": {
                     "type": "boolean",
-                    "description": "是否使用聊天中的图片作为改图参考。修改当前消息、引用消息、上一张图或近期聊天图片时必须设为 true；插件会自行取得图片，无需把图片 URL 复制到 reference_images。纯文生图设为 false。",
+                    "description": "是否使用聊天中的图片作为改图参考。修改当前消息、引用消息、上一张图或近期聊天图片时必须设为 true，插件会自动取图；纯文生图设为 false。",
                 },
             },
             "required": [],
@@ -468,8 +466,8 @@ class PresetQueryTool(FunctionTool[AstrAgentContext]):
 
     name: str = "query_image_presets"
     description: str = (
-        "查询生图预设或人设。默认只返回名称列表；当需要了解某个预设或人设的具体内容时，"
-        "填写 name 查看详情。查询到的预设名称可用于 generate_image 的 preset 参数，人设名称可用于 persona 参数。"
+        "查询可用的生图预设或人设。默认返回名称列表；填写 name 查看某个预设或人设的详情。"
+        "查询到的预设名称可用于 generate_image 的 preset 参数，人设名称可用于 persona 参数。"
     )
     parameters: dict = Field(
         default_factory=lambda: {
@@ -483,7 +481,7 @@ class PresetQueryTool(FunctionTool[AstrAgentContext]):
                 },
                 "name": {
                     "type": "string",
-                    "description": "可选。填写后查看指定预设或人设的具体内容；留空时只返回名称列表。",
+                    "description": "可选。填写后查看指定预设或人设的详情；留空只返回名称列表。",
                 },
             },
             "required": [],
@@ -562,9 +560,8 @@ class PresetEditTool(FunctionTool[AstrAgentContext]):
 
     name: str = "edit_image_presets"
     description: str = (
-        "创建或删除生图预设。预设包含提示词 preset_prompt,可选 preset_aspect_ratio、"
-        "preset_resolution 和 preset_image（参考图，支持 http(s) 图片 URL）。"
-        "只编辑预设，不编辑人设。"
+        "创建或删除生图预设。创建时用 prompt 传入提示词，并可选用 aspect_ratio、"
+        "resolution 和 reference_image 补充预设参数。只编辑预设，不编辑人设。"
     )
     parameters: dict = Field(
         default_factory=lambda: {
@@ -581,7 +578,7 @@ class PresetEditTool(FunctionTool[AstrAgentContext]):
                 },
                 "prompt": {
                     "type": "string",
-                    "description": "创建预设时必填的预设提示词。",
+                    "description": "创建预设时必填的预设提示词，直接填写普通提示词文本。",
                 },
                 "aspect_ratio": {
                     "type": "string",
@@ -593,7 +590,7 @@ class PresetEditTool(FunctionTool[AstrAgentContext]):
                 },
                 "reference_image": {
                     "type": "string",
-                    "description": "可选。预设参考图，支持 http(s) 图片 URL；本地图片仅允许当前会话 workspace 和 AstrBot temp 目录。",
+                    "description": "可选。预设参考图，支持 http(s) 图片 URL。",
                 },
             },
             "required": ["action", "name"],
@@ -629,21 +626,16 @@ class PresetEditTool(FunctionTool[AstrAgentContext]):
             return "❌ 请提供预设名称"
 
         if action == "create_preset":
-            content = str(kwargs.get("prompt", "") or "").strip()
-            if not content:
+            prompt = str(kwargs.get("prompt", "") or "").strip()
+            if not prompt:
                 return "❌ 请提供预设内容"
-            if error := _validate_preset_content(content):
-                return f"❌ {error}"
-            content_prompt, content_ratio, content_resolution = parse_preset_content(
-                content
-            )
-            ratio = str(kwargs.get("aspect_ratio", "") or "").strip() or content_ratio
-            size = str(kwargs.get("resolution", "") or "").strip() or content_resolution
+            ratio = str(kwargs.get("aspect_ratio", "") or "").strip()
+            size = str(kwargs.get("resolution", "") or "").strip()
             if error := validate_preset_options(ratio, size):
                 return f"❌ {error}"
             plugin.config_manager.save_preset_template(
                 name=name,
-                prompt=content_prompt or content,
+                prompt=prompt,
                 aspect_ratio=ratio,
                 resolution=size,
                 image=str(kwargs.get("reference_image", "") or "").strip(),
@@ -666,10 +658,9 @@ class ImageTaskTool(FunctionTool[AstrAgentContext]):
 
     name: str = "manage_image_tasks"
     description: str = (
-        "管理当前会话的生图任务。list 只列出正在进行的任务；"
-        "detail 可查看仍保留记录的进行中或已结束任务，并会显示结果是否已发送给用户；"
-        "cancel 只能取消仍在排队/运行/取消中的任务。"
-        "已送达的结果不要重复发送给用户。"
+        "管理当前会话的生图任务。list 列出正在进行的任务；"
+        "detail 查看进行中或已结束任务的详情；cancel 取消仍在排队或运行中的任务。"
+        "已发送给用户的结果不要重复发送。"
     )
     parameters: dict = Field(
         default_factory=lambda: {
@@ -683,7 +674,7 @@ class ImageTaskTool(FunctionTool[AstrAgentContext]):
                 },
                 "task": {
                     "type": "string",
-                    "description": "任务编号或任务ID。detail 和 cancel 时填写；编号来自 list 返回的正在进行任务列表。已结束任务只能用任务ID查看详情。",
+                    "description": "任务编号或任务ID。detail 和 cancel 时填写；编号取自 list 的结果，已结束任务只能用任务ID。",
                 },
             },
             "required": [],

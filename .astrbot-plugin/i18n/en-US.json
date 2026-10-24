@@ -37,6 +37,9 @@
         "referenceImages": "Reference images",
         "referenceHint": "Supports jpg/png/webp/gif/heic/heif, limited by plugin settings.",
         "referenceUnsupported": "The current adapter does not declare image-to-image support.",
+        "openReference": "Click to enlarge",
+        "removeReference": "Remove reference image",
+        "referenceCount": "{count} reference image(s) selected",
         "noPresets": "No presets",
         "noPersonas": "No personas",
         "noModels": "Use configured model",
@@ -995,10 +998,10 @@
     },
     "prompt_templates": {
       "description": "Prompt templates",
-      "hint": "Centrally configure preset prompts and persona templates. View them with /预设 and use them by name with /生图. By default, only leading consecutive names are matched.",
+      "hint": "Centrally configure preset and persona templates. View them with /预设 and use them by name with /生图.",
       "presets": {
         "description": "Preset prompts (legacy)",
-        "hint": "Legacy preset configuration kept only for upgrades. Use \"Preset templates\" instead; entries here are still read by the plugin."
+        "hint": "Legacy preset configuration kept only for upgrades: entries are migrated to \"Preset templates\" on the first load and are not used afterwards. Use \"Preset templates\" instead."
       },
       "preset_templates": {
         "description": "Preset templates",
@@ -1013,19 +1016,39 @@
             },
             "preset_prompt": {
               "description": "Preset prompt",
-              "hint": "Appended to the prompt when generating images with this preset."
+              "hint": "Joined into the prompt when generating images with this preset."
             },
             "preset_aspect_ratio": {
               "description": "Aspect ratio",
-              "hint": "Optional. Applied when this preset matches; an explicitly requested aspect ratio wins."
+              "hint": "Optional. \"Do not override\" keeps the default aspect ratio.",
+              "labels": [
+                "Do not override",
+                "1:1",
+                "2:3",
+                "3:2",
+                "3:4",
+                "4:3",
+                "4:5",
+                "5:4",
+                "9:16",
+                "16:9",
+                "21:9"
+              ]
             },
             "preset_resolution": {
               "description": "Resolution",
-              "hint": "Optional. Applied when this preset matches; an explicitly requested resolution wins."
+              "hint": "Optional. \"Do not override\" keeps the default resolution.",
+              "labels": [
+                "Do not override",
+                "1K",
+                "1.5K",
+                "2K",
+                "4K"
+              ]
             },
             "preset_image": {
               "description": "Preset reference image",
-              "hint": "Optional. Used as an image-to-image reference image."
+              "hint": "Optional. Used as a reference image when the current model supports image-to-image."
             }
           }
         }
@@ -1043,18 +1066,18 @@
             },
             "persona_prompt": {
               "description": "Persona description",
-              "hint": "Prepended to the prompt when generating images with this persona."
+              "hint": "Joined into the prompt when generating images with this persona."
             },
             "persona_image": {
               "description": "Persona reference image",
-              "hint": "Optional. Used as an image-to-image reference image."
+              "hint": "Optional. Used as a reference image when the current model supports image-to-image."
             }
           }
         }
       },
       "prompt_body_template_match": {
         "description": "Match names in prompt body",
-        "hint": "Disabled by default so only leading consecutive tokens are matched. Select presets, personas, or both to scan names in the prompt body.",
+        "hint": "Disabled by default, so names are only matched at the start of the prompt. Selecting a type also matches its names in the prompt body.",
         "labels": [
           "Preset",
           "Persona"

@@ -56,7 +56,7 @@ from .models import (
     UsageSettings,
 )
 from .provider_parser import ConfigProviderParserMixin
-from .templates import ConfigTemplateStoreMixin
+from .templates import PRESETS_MIGRATED_FIELD, ConfigTemplateStoreMixin
 from .validator import ConfigValidator
 
 __all__ = (
@@ -136,6 +136,7 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
             presets=self._load_presets(
                 prompt_templates_cfg.get("presets", []),
                 prompt_templates_cfg.get("preset_templates", []),
+                migrated=bool(prompt_templates_cfg.get(PRESETS_MIGRATED_FIELD)),
             ),
             personas=self._load_personas(prompt_templates_cfg.get("personas", [])),
             prompt_body_template_match=self._parse_prompt_body_template_match(
