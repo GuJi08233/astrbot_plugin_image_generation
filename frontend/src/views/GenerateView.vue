@@ -147,18 +147,45 @@
               prepend-inner-icon="$image"
               @update:model-value="handleFiles"
             />
-            <div v-if="uploads.length" class="d-flex flex-wrap ga-2 mt-3">
-              <v-chip
+            <div v-if="uploads.length" class="reference-grid mt-3">
+              <div
                 v-for="upload in uploads"
                 :key="upload.token"
-                closable
-                size="small"
-                variant="tonal"
-                color="primary"
-                @click:close="removeUpload(upload.token)"
+                class="reference-item"
               >
-                {{ upload.filename }} · {{ formatBytes(upload.size) }}
-              </v-chip>
+                <div
+                  class="thumb reference-thumb"
+                  :title="t('form.openReference', '点击查看大图')"
+                  @click="openReference(upload)"
+                >
+                  <img
+                    v-if="upload.preview_url"
+                    :src="upload.preview_url"
+                    :alt="upload.filename"
+                  />
+                  <v-icon v-else icon="$image" size="18" />
+                  <v-btn
+                    class="reference-remove"
+                    icon="$close"
+                    size="x-small"
+                    color="surface"
+                    variant="flat"
+                    :title="t('form.removeReference', '移除参考图')"
+                    @click.stop="removeUpload(upload.token)"
+                  />
+                </div>
+                <div class="reference-name" :title="upload.filename">
+                  {{ upload.filename }}
+                </div>
+                <div class="section-caption">{{ formatBytes(upload.size) }}</div>
+              </div>
+            </div>
+            <div v-if="uploads.length" class="reference-count section-caption mt-2">
+              {{
+                t("form.referenceCount", "已选择 {count} 张参考图", {
+                  count: uploads.length,
+                })
+              }}
             </div>
           </div>
         </v-card-text>
@@ -405,7 +432,10 @@ async function handleFiles(files) {
   uploading.value = true;
   try {
     for (const file of list) {
-      uploads.value.push(await uploadFile("page/reference/upload", file));
+      const upload = await uploadFile("page/reference/upload", file);
+      // Keep a local object URL so the uploaded image can be previewed before
+      // the task is submitted; released again when the entry goes away.
+      uploads.value.push({ ...upload, preview_url: URL.createObjectURL(file) });
     }
     notify(t("message.uploaded", "参考图已上传"));
   } catch (error) {
@@ -416,7 +446,18 @@ async function handleFiles(files) {
   }
 }
 
+function releaseUploadPreviews(items) {
+  for (const item of items) {
+    if (item?.preview_url) {
+      URL.revokeObjectURL(item.preview_url);
+    }
+  }
+}
+
 function removeUpload(token) {
+  releaseUploadPreviews(
+    uploads.value.filter((item) => item.token === token),
+  );
   uploads.value = uploads.value.filter((item) => item.token !== token);
 }
 
@@ -449,6 +490,7 @@ async function submit() {
     }
     notify(t("message.taskSubmitted", "任务已提交"));
     form.prompt = "";
+    releaseUploadPreviews(uploads.value);
     uploads.value = [];
     selectedPresets.value = [];
     selectedPersonas.value = [];
@@ -535,6 +577,14 @@ async function openImage(task, image) {
   }
 }
 
+function openReference(upload) {
+  lightbox.title = upload.filename || t("form.referenceImages", "参考图");
+  lightbox.downloadEndpoint = "";
+  lightbox.filename = "";
+  lightbox.src = upload.preview_url || "";
+  lightbox.open = true;
+}
+
 function downloadLightbox() {
   if (lightbox.downloadEndpoint) {
     downloadFile(lightbox.downloadEndpoint, lightbox.filename);
@@ -574,7 +624,10 @@ onMounted(() => {
   }
 });
 
-onBeforeUnmount(stopPolling);
+onBeforeUnmount(() => {
+  stopPolling();
+  releaseUploadPreviews(uploads.value);
+});
 </script>
 
 <style scoped>
@@ -625,5 +678,38 @@ onBeforeUnmount(stopPolling);
 
 .result-thumb {
   aspect-ratio: 1;
+}
+
+.reference-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: 12px;
+}
+
+.reference-item {
+  min-width: 0;
+}
+
+.reference-thumb {
+  border: 1px solid rgba(var(--v-border-color), 0.3);
+}
+
+.reference-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  opacity: 0.88;
+}
+
+.reference-name {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reference-count {
+  opacity: 0.72;
 }
 </style>

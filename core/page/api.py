@@ -151,8 +151,12 @@ class ImageGenerationPageAPI(PagePayloadMixin, PageStatsMixin):
                 ),
                 "supports_resolution": bool(capabilities & ImageCapability.RESOLUTION),
                 "presets": [
-                    {"name": name, "summary": safe_log_text(value, 120)}
-                    for name, value in plugin.config_manager.presets.items()
+                    {
+                        "name": name,
+                        "summary": safe_log_text(preset.prompt, 120),
+                        "has_image": bool(preset.image),
+                    }
+                    for name, preset in plugin.config_manager.presets.items()
                 ],
                 "personas": [
                     {

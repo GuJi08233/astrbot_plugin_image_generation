@@ -8,10 +8,32 @@ from typing import Any
 from astrbot.api import logger
 
 from ..generation.reference_collector import normalize_string_items
+from ..shared.constants import UNSPECIFIED_OPTION
 from ..shared.logging import log_prefix
-from .models import PersonaTemplate
+from .models import PersonaTemplate, PresetTemplate
+from .validator import TEMPLATE_KEY_FIELD
 
 LOG = log_prefix("Config")
+
+# Hidden config flag recording that legacy presets were copied into the template
+# config. Remove it together with the legacy ``presets`` list in a later release.
+PRESETS_MIGRATED_FIELD = "presets_migrated"
+
+
+def normalize_preset_size(value: Any) -> str:
+    """Return a preset size value, mapping the unset option to an empty string.
+
+    The config uses the ``不指定`` dropdown option for "do not override"; the
+    runtime model keeps an empty string for the same state.
+
+    Args:
+        value: Raw aspect ratio or resolution from config or tool arguments.
+
+    Returns:
+        The value itself, or an empty string when it means "unspecified".
+    """
+    text = str(value or "").strip()
+    return "" if text == UNSPECIFIED_OPTION else text
 
 
 def build_generation_prompt(
@@ -82,6 +104,11 @@ def find_named_entry(entries: dict[str, Any], token: str) -> str | None:
     return None
 
 
+def template_image_label(kind: str, name: str) -> str:
+    """Return a readable label for a template reference image."""
+    return f"{'人设' if kind == 'persona' else '预设'}「{name}」"
+
+
 def resolve_named_templates(
     names: list[str],
     entries: dict[str, Any],
@@ -94,20 +121,22 @@ def resolve_named_templates(
 
     Args:
         names: Names already split and ordered by the caller.
-        entries: Preset contents or persona templates for ``kind``.
+        entries: Preset or persona templates for ``kind``.
         kind: ``preset`` or ``persona``.
-        aspect_ratio: Current aspect ratio, updated by JSON presets.
-        resolution: Current resolution, updated by JSON presets.
+        aspect_ratio: Current aspect ratio, updated by preset templates.
+        resolution: Current resolution, updated by preset templates.
 
     Returns:
-        Prompt fragments, aspect ratio, resolution, matched names, persona
-        reference images, and a plain missing-name error. Preset resolution
-        leaves the image list empty; persona resolution leaves ratio and
-        resolution unchanged.
+        Prompt fragments, aspect ratio, resolution, matched names, template
+        reference images, and a plain missing-name error. Persona resolution
+        leaves ratio and resolution unchanged, and the first preset that
+        declares a size wins.
     """
     prompts: list[str] = []
     matched_names: list[str] = []
-    persona_images: list[tuple[str, str]] = []
+    template_images: list[tuple[str, str]] = []
+    ratio_from_preset = False
+    resolution_from_preset = False
     label = "人设" if kind == "persona" else "预设"
 
     for name in names:
@@ -115,24 +144,25 @@ def resolve_named_templates(
         if not matched_name:
             return [], aspect_ratio, resolution, [], [], f"{label}不存在: {name}"
 
-        if kind == "persona":
-            persona = entries[matched_name]
-            persona_prompt = persona.prompt.strip()
-            if persona_prompt:
-                prompts.append(persona_prompt)
-            if persona.image:
-                persona_images.append((matched_name, persona.image))
-        else:
-            preset_prompt, aspect_ratio, resolution = parse_preset_prompt(
-                entries[matched_name],
-                aspect_ratio,
-                resolution,
-            )
-            if preset_prompt:
-                prompts.append(preset_prompt)
+        template = entries[matched_name]
+        if template_prompt := str(getattr(template, "prompt", "") or "").strip():
+            prompts.append(template_prompt)
+        if kind == "preset":
+            if not ratio_from_preset and (
+                ratio := str(getattr(template, "aspect_ratio", "") or "").strip()
+            ):
+                aspect_ratio = ratio
+                ratio_from_preset = True
+            if not resolution_from_preset and (
+                size := str(getattr(template, "resolution", "") or "").strip()
+            ):
+                resolution = size
+                resolution_from_preset = True
+        if image := str(getattr(template, "image", "") or "").strip():
+            template_images.append((template_image_label(kind, matched_name), image))
         matched_names.append(matched_name)
 
-    return prompts, aspect_ratio, resolution, matched_names, persona_images, None
+    return prompts, aspect_ratio, resolution, matched_names, template_images, None
 
 
 def _ascii_token_boundary_ok(text: str, start: int, end: int) -> bool:
@@ -161,7 +191,7 @@ def _ascii_token_boundary_ok(text: str, start: int, end: int) -> bool:
 
 def extract_templates_from_prompt(
     prompt: str,
-    presets: dict[str, Any],
+    presets: dict[str, PresetTemplate],
     personas: dict[str, PersonaTemplate],
     *,
     aspect_ratio: str,
@@ -185,16 +215,16 @@ def extract_templates_from_prompt(
 
     Args:
         prompt: User-provided prompt that may contain template names.
-        presets: Configured preset name-to-content mapping.
+        presets: Configured preset templates.
         personas: Configured persona templates.
-        aspect_ratio: Current aspect ratio, updated by JSON presets.
-        resolution: Current resolution, updated by JSON presets.
+        aspect_ratio: Current aspect ratio, updated by preset templates.
+        resolution: Current resolution, updated by preset templates.
         skip_names: Template names already applied by explicit parameters.
 
     Returns:
         Remaining extra prompt, aspect ratio, resolution, preset prompt
         fragments, persona prompt fragments, matched preset names, matched
-        persona names, and persona reference images.
+        persona names, and template reference images in scan order.
     """
     extra_source = str(prompt or "").strip()
     empty: tuple[
@@ -232,7 +262,9 @@ def extract_templates_from_prompt(
     persona_prompts: list[str] = []
     matched_presets: list[str] = []
     matched_personas: list[str] = []
-    persona_images: list[tuple[str, str]] = []
+    template_images: list[tuple[str, str]] = []
+    ratio_from_preset = False
+    resolution_from_preset = False
     leftover_chars: list[str] = []
     index = 0
     length = len(extra_source)
@@ -257,13 +289,19 @@ def extract_templates_from_prompt(
             continue
         skip.add(original.lower())
         if kind == "preset":
-            preset_prompt, aspect_ratio, resolution = parse_preset_prompt(
-                presets[original],
-                aspect_ratio,
-                resolution,
-            )
-            if preset_prompt:
+            preset = presets[original]
+            if preset_prompt := preset.prompt.strip():
                 preset_prompts.append(preset_prompt)
+            if not ratio_from_preset and (ratio := preset.aspect_ratio.strip()):
+                aspect_ratio = ratio
+                ratio_from_preset = True
+            if not resolution_from_preset and (size := preset.resolution.strip()):
+                resolution = size
+                resolution_from_preset = True
+            if preset.image:
+                template_images.append(
+                    (template_image_label("preset", original), preset.image)
+                )
             matched_presets.append(original)
         else:
             persona = personas[original]
@@ -271,7 +309,9 @@ def extract_templates_from_prompt(
             if persona_prompt:
                 persona_prompts.append(persona_prompt)
             if persona.image:
-                persona_images.append((original, persona.image))
+                template_images.append(
+                    (template_image_label("persona", original), persona.image)
+                )
             matched_personas.append(original)
         index = end
 
@@ -286,32 +326,41 @@ def extract_templates_from_prompt(
         persona_prompts,
         matched_presets,
         matched_personas,
-        persona_images,
+        template_images,
     )
 
 
-def parse_preset_prompt(
-    preset_content: Any,
-    aspect_ratio: str,
-    resolution: str,
-) -> tuple[str, str, str]:
-    """Parse a preset prompt and optional generation overrides."""
-    preset_prompt = str(preset_content or "").strip()
-    if not preset_prompt.startswith("{"):
-        return preset_prompt, aspect_ratio, resolution
+def parse_legacy_preset_content(content: Any) -> tuple[str, str, str]:
+    """Parse legacy ``名称:内容`` preset content into structured fields.
+
+    Only the hidden legacy preset list uses this format; every other entry
+    point writes structured preset fields directly.
+
+    Args:
+        content: Legacy preset content, either a plain prompt or a JSON object
+            with ``prompt``, ``aspect_ratio`` and ``resolution`` fields.
+
+    Returns:
+        Prompt text, aspect ratio, and resolution. Unparsable JSON keeps the
+        raw content as the prompt so no preset is silently dropped.
+    """
+    raw_content = str(content or "").strip()
+    if not raw_content.startswith("{"):
+        return raw_content, "", ""
 
     try:
-        preset_data = json.loads(preset_prompt)
+        preset_data = json.loads(raw_content)
     except json.JSONDecodeError:
-        return preset_prompt, aspect_ratio, resolution
+        return raw_content, "", ""
 
     if not isinstance(preset_data, dict):
-        return preset_prompt, aspect_ratio, resolution
+        return raw_content, "", ""
 
-    preset_prompt = str(preset_data.get("prompt", "") or "").strip()
-    aspect_ratio = str(preset_data.get("aspect_ratio") or aspect_ratio)
-    resolution = str(preset_data.get("resolution") or resolution)
-    return preset_prompt, aspect_ratio, resolution
+    return (
+        str(preset_data.get("prompt", "") or "").strip(),
+        str(preset_data.get("aspect_ratio", "") or "").strip(),
+        str(preset_data.get("resolution", "") or "").strip(),
+    )
 
 
 def format_template_summary(
@@ -339,18 +388,130 @@ def format_template_summary(
 class ConfigTemplateStoreMixin:
     """Mixin for reading and writing preset/persona template config."""
 
-    def _load_presets(self, presets_config: list[Any]) -> dict[str, Any]:
-        """Load configured prompt presets."""
-        presets: dict[str, Any] = {}
-        if not isinstance(presets_config, list):
-            return presets
+    def _load_presets(
+        self,
+        presets_config: Any,
+        preset_templates_config: Any,
+        *,
+        migrated: bool,
+    ) -> dict[str, PresetTemplate]:
+        """Load prompt presets from legacy and template configs.
 
-        for preset_str in presets_config:
-            if isinstance(preset_str, str) and ":" in preset_str:
-                name, prompt = preset_str.split(":", 1)
-                if name.strip() and prompt.strip():
-                    presets[name.strip()] = prompt.strip()
+        Legacy ``名称:提示词`` entries are read only until the one-time migration
+        ran. Afterwards the template config is the single source of truth, so a
+        preset deleted from the template list is not restored from the legacy
+        field. Structured entries win on name conflicts.
+
+        Args:
+            presets_config: Legacy preset string list config value.
+            preset_templates_config: Structured preset template config value.
+            migrated: Whether the legacy list was already migrated.
+
+        Returns:
+            Merged preset templates keyed by name.
+        """
+        presets: dict[str, PresetTemplate] = {}
+        if not migrated and isinstance(presets_config, list):
+            for preset_str in presets_config:
+                if not isinstance(preset_str, str) or ":" not in preset_str:
+                    continue
+                name, content = preset_str.split(":", 1)
+                name = name.strip()
+                prompt, aspect_ratio, resolution = parse_legacy_preset_content(content)
+                if name and (prompt or aspect_ratio or resolution):
+                    presets[name] = PresetTemplate(
+                        name=name,
+                        prompt=prompt,
+                        aspect_ratio=normalize_preset_size(aspect_ratio),
+                        resolution=normalize_preset_size(resolution),
+                    )
+
+        if isinstance(preset_templates_config, list):
+            for item in preset_templates_config:
+                if not isinstance(item, dict):
+                    continue
+
+                name = str(item.get("preset_name") or item.get("name") or "").strip()
+                prompt = str(
+                    item.get("preset_prompt") or item.get("prompt") or ""
+                ).strip()
+                aspect_ratio = str(
+                    item.get("preset_aspect_ratio") or item.get("aspect_ratio") or ""
+                ).strip()
+                resolution = str(
+                    item.get("preset_resolution") or item.get("resolution") or ""
+                ).strip()
+                image = self._parse_file_value(
+                    item.get("preset_image")
+                    or item.get("image")
+                    or item.get("reference_image")
+                )
+                if name and (prompt or image or aspect_ratio or resolution):
+                    presets[name] = PresetTemplate(
+                        name=name,
+                        prompt=prompt,
+                        aspect_ratio=normalize_preset_size(aspect_ratio),
+                        resolution=normalize_preset_size(resolution),
+                        image=image,
+                    )
         return presets
+
+    def migrate_legacy_presets(self) -> int:
+        """Copy legacy presets into the template config and return the count.
+
+        Runs once: the hidden ``presets_migrated`` flag is set after the first
+        pass, so presets deleted from the template list afterwards are not
+        restored. Legacy entries stay untouched so a downgrade keeps working,
+        and only names without a template entry are copied.
+
+        Returns:
+            Number of presets copied into ``preset_templates``.
+        """
+        prompt_templates_cfg = self._get_writable_prompt_templates_config()
+        if prompt_templates_cfg.get(PRESETS_MIGRATED_FIELD):
+            return 0
+
+        legacy_presets = prompt_templates_cfg.get("presets")
+        raw_templates = prompt_templates_cfg.get("preset_templates")
+        # Copy before appending: the config value can be the schema's default
+        # list object, which must not be mutated in place.
+        templates = list(raw_templates) if isinstance(raw_templates, list) else []
+        known_names = {
+            str(item.get("preset_name") or item.get("name") or "").strip().lower()
+            for item in templates
+            if isinstance(item, dict)
+        }
+
+        copied = 0
+        for preset_str in legacy_presets if isinstance(legacy_presets, list) else []:
+            if not isinstance(preset_str, str) or ":" not in preset_str:
+                continue
+            name, content = preset_str.split(":", 1)
+            name = name.strip()
+            if not name or name.lower() in known_names:
+                continue
+
+            prompt, aspect_ratio, resolution = parse_legacy_preset_content(content)
+            if not (prompt or aspect_ratio or resolution):
+                continue
+
+            templates.append(
+                {
+                    TEMPLATE_KEY_FIELD: "preset",
+                    "preset_name": name,
+                    "preset_prompt": prompt,
+                    "preset_aspect_ratio": normalize_preset_size(aspect_ratio),
+                    "preset_resolution": normalize_preset_size(resolution),
+                    "preset_image": [],
+                }
+            )
+            known_names.add(name.lower())
+            copied += 1
+
+        prompt_templates_cfg["preset_templates"] = templates
+        prompt_templates_cfg[PRESETS_MIGRATED_FIELD] = True
+        self._config.save_config()
+        return copied
 
     def _get_writable_prompt_templates_config(self) -> dict[str, Any]:
         """Return the grouped prompt-template config for command-side updates."""
@@ -363,9 +524,21 @@ class ConfigTemplateStoreMixin:
         return value
 
     def _save_presets_config(self) -> None:
+        """Persist presets into the structured preset template config."""
         prompt_templates_cfg = self._get_writable_prompt_templates_config()
-        prompt_templates_cfg["presets"] = [
-            f"{k}:{v}" for k, v in self._plugin_config.presets.items()
+        prompt_templates_cfg["preset_templates"] = [
+            {
+                TEMPLATE_KEY_FIELD: "preset",
+                "preset_name": preset.name,
+                "preset_prompt": preset.prompt,
+                # Empty means "do not override", which the dashboard select
+                # shows as no selection.
+                "preset_aspect_ratio": preset.aspect_ratio,
+                "preset_resolution": preset.resolution,
+                # The file field is stored as a list, matching the dashboard.
+                "preset_image": [preset.image] if preset.image else [],
+            }
+            for preset in self._plugin_config.presets.values()
         ]
         self._config.save_config()
 
@@ -405,27 +578,66 @@ class ConfigTemplateStoreMixin:
                     return parsed
         return ""
 
-    def save_preset(self, name: str, content: str) -> None:
-        """Save a prompt preset."""
-        self._plugin_config.presets[name] = content
+    def save_preset_template(
+        self,
+        *,
+        name: str,
+        prompt: str,
+        aspect_ratio: str = "",
+        resolution: str = "",
+        image: str = "",
+    ) -> None:
+        """Save a structured preset template and return nothing."""
+        self._plugin_config.presets[name] = PresetTemplate(
+            name=name,
+            prompt=str(prompt or "").strip(),
+            aspect_ratio=normalize_preset_size(aspect_ratio),
+            resolution=normalize_preset_size(resolution),
+            image=str(image or "").strip(),
+        )
         self._save_presets_config()
 
     def delete_preset(self, name: str) -> bool:
-        """Delete a prompt preset and return whether it existed."""
-        if name in self._plugin_config.presets:
-            del self._plugin_config.presets[name]
-            self._save_presets_config()
-            return True
-        return False
+        """Delete a prompt preset and return whether it existed.
+
+        The hidden legacy entry with the same name is removed as well, so the
+        preset is not restored if this config is ever opened by an older
+        version that still reads the legacy list.
+        """
+        if name not in self._plugin_config.presets:
+            return False
+        del self._plugin_config.presets[name]
+
+        prompt_templates_cfg = self._get_writable_prompt_templates_config()
+        legacy_presets = prompt_templates_cfg.get("presets")
+        if isinstance(legacy_presets, list):
+            legacy_names = {
+                item.split(":", 1)[0].strip().lower()
+                for item in legacy_presets
+                if isinstance(item, str) and ":" in item
+            }
+            if name.strip().lower() in legacy_names:
+                prompt_templates_cfg["presets"] = [
+                    item
+                    for item in legacy_presets
+                    if not isinstance(item, str)
+                    or ":" not in item
+                    or item.split(":", 1)[0].strip().lower() != name.strip().lower()
+                ]
+
+        self._save_presets_config()
+        return True
 
 
 __all__ = (
+    "PRESETS_MIGRATED_FIELD",
     "ConfigTemplateStoreMixin",
     "build_generation_prompt",
     "extract_templates_from_prompt",
     "find_named_entry",
     "format_template_summary",
     "normalize_name_items",
-    "parse_preset_prompt",
+    "normalize_preset_size",
     "resolve_named_templates",
+    "template_image_label",
 )

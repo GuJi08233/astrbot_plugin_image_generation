@@ -1,12 +1,11 @@
 """Preset and persona text helpers for LLM tools.
 
 These functions only normalize aliases, format query results, and validate
-preset JSON. Tool classes and their schemas stay in ``tools.py``.
+preset size options. Tool classes and their schemas stay in ``tools.py``.
 """
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from ..shared.constants import SUPPORTED_ASPECT_RATIOS, SUPPORTED_RESOLUTIONS
@@ -60,33 +59,15 @@ def normalize_task_action(action: str) -> str:
     return normalized
 
 
-def _format_preset_detail(name: str, content: Any) -> str:
-    """Format one preset's full content for query results."""
-    content_text = str(content or "").strip()
+def _format_preset_detail(name: str, preset: Any) -> str:
+    """Format one preset's content for query results."""
     lines = [f"📋 预设详情: {name}"]
-    if content_text.startswith("{"):
-        try:
-            preset_data = json.loads(content_text)
-        except json.JSONDecodeError:
-            lines.append("格式: 高级 JSON（解析失败，将按原文展示）")
-            lines.append(f"内容: {content_text}")
-            return "\n".join(lines)
-
-        if isinstance(preset_data, dict):
-            lines.append("格式: 高级 JSON")
-            if prompt := str(preset_data.get("prompt", "") or "").strip():
-                lines.append(f"提示词: {prompt}")
-            if aspect_ratio := str(preset_data.get("aspect_ratio", "") or "").strip():
-                lines.append(f"宽高比: {aspect_ratio}")
-            if resolution := str(preset_data.get("resolution", "") or "").strip():
-                lines.append(f"分辨率: {resolution}")
-            if description := str(preset_data.get("description", "") or "").strip():
-                lines.append(f"描述: {description}")
-            lines.append(f"原始内容: {content_text}")
-            return "\n".join(lines)
-
-    lines.append("格式: 简单提示词")
-    lines.append(f"内容: {content_text}")
+    lines.append(f"提示词: {preset.prompt}")
+    if preset.aspect_ratio:
+        lines.append(f"宽高比: {preset.aspect_ratio}")
+    if preset.resolution:
+        lines.append(f"分辨率: {preset.resolution}")
+    lines.append(f"参考图: {preset.image or '无'}")
     return "\n".join(lines)
 
 
@@ -98,27 +79,10 @@ def _format_persona_detail(name: str, persona: Any) -> str:
     return "\n".join(lines)
 
 
-def _validate_preset_content(content: str) -> str | None:
-    """Validate preset content when it is written by an LLM tool."""
-    if not content.startswith("{"):
-        return None
-
-    try:
-        preset_data = json.loads(content)
-    except json.JSONDecodeError as exc:
-        return f"高级 JSON 预设格式错误: {exc}"
-
-    if not isinstance(preset_data, dict):
-        return "高级 JSON 预设必须是对象"
-    if not str(preset_data.get("prompt", "") or "").strip():
-        return "高级 JSON 预设必须包含非空 prompt 字段"
-
-    aspect_ratio = str(preset_data.get("aspect_ratio", "") or "").strip()
+def validate_preset_options(aspect_ratio: str, resolution: str) -> str | None:
+    """Validate preset size options and return an error message when invalid."""
     if aspect_ratio and aspect_ratio not in ASPECT_RATIO_OPTIONS:
-        return f"高级 JSON 预设的 aspect_ratio 不支持: {aspect_ratio}"
-
-    resolution = str(preset_data.get("resolution", "") or "").strip()
+        return f"预设的 aspect_ratio 不支持: {aspect_ratio}"
     if resolution and resolution not in RESOLUTION_OPTIONS:
-        return f"高级 JSON 预设的 resolution 不支持: {resolution}"
-
+        return f"预设的 resolution 不支持: {resolution}"
     return None

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 from ..shared.constants import (
     ALL_LLM_TOOLS,
@@ -81,6 +80,17 @@ class GenerationSettings:
 
 
 @dataclass
+class PresetTemplate:
+    """Image generation prompt preset."""
+
+    name: str
+    prompt: str
+    aspect_ratio: str = ""
+    resolution: str = ""
+    image: str = ""
+
+
+@dataclass
 class PersonaTemplate:
     """Image generation persona template."""
 
@@ -129,7 +139,7 @@ class PluginConfig:
     safety_audit_settings: SafetyAuditSettings = field(
         default_factory=SafetyAuditSettings
     )
-    presets: dict[str, Any] = field(default_factory=dict)
+    presets: dict[str, PresetTemplate] = field(default_factory=dict)
     personas: dict[str, PersonaTemplate] = field(default_factory=dict)
     prompt_body_template_match: set[str] = field(default_factory=set)
     enabled_llm_tools: set[str] = field(default_factory=lambda: set(ALL_LLM_TOOLS))
@@ -139,6 +149,7 @@ __all__ = (
     "GenerationSettings",
     "ImageAuditSettings",
     "PersonaTemplate",
+    "PresetTemplate",
     "PluginConfig",
     "PromptAuditSettings",
     "SafetyAuditSettings",

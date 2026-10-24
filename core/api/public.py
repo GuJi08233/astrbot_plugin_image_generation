@@ -14,8 +14,9 @@ from ..config.templates import (
     normalize_name_items,
     resolve_named_templates,
 )
+from ..generation.options import is_explicit_size
 from ..generation.reference_collector import (
-    collect_reference_images_from_personas,
+    collect_reference_images_from_templates,
     deduplicate_reference_images,
     download_reference_images,
 )
@@ -102,7 +103,7 @@ class ImageGenerationPublicAPI:
             final_resolution,
             matched_presets,
             matched_personas,
-            persona_images,
+            template_images,
             parse_error,
         ) = self._build_prompt(
             prompt=prompt,
@@ -110,6 +111,12 @@ class ImageGenerationPublicAPI:
             personas=personas,
             aspect_ratio=str(final_aspect_ratio),
             resolution=str(final_resolution),
+            fixed_aspect_ratio=(
+                str(aspect_ratio) if is_explicit_size(aspect_ratio) else None
+            ),
+            fixed_resolution=(
+                str(resolution) if is_explicit_size(resolution) else None
+            ),
         )
         if parse_error:
             return self._submit_error(
@@ -188,7 +195,7 @@ class ImageGenerationPublicAPI:
             references = await self._collect_reference_images(
                 reference_image_sources=reference_image_sources,
                 reference_image_data=reference_image_data,
-                persona_images=persona_images,
+                template_images=template_images,
                 task_id=task_id,
                 unified_msg_origin=scope,
                 request_source=request_source,
@@ -505,6 +512,8 @@ class ImageGenerationPublicAPI:
         personas: str | list[str] | None,
         aspect_ratio: str,
         resolution: str,
+        fixed_aspect_ratio: str | None = None,
+        fixed_resolution: str | None = None,
     ) -> tuple[
         str,
         str,
@@ -515,14 +524,19 @@ class ImageGenerationPublicAPI:
         str | None,
     ]:
         config_manager = self._plugin.config_manager
-        preset_prompts, aspect_ratio, resolution, matched_presets, _, error = (
-            resolve_named_templates(
-                normalize_name_items(presets),
-                config_manager.presets,
-                kind="preset",
-                aspect_ratio=aspect_ratio,
-                resolution=resolution,
-            )
+        (
+            preset_prompts,
+            aspect_ratio,
+            resolution,
+            matched_presets,
+            template_images,
+            error,
+        ) = resolve_named_templates(
+            normalize_name_items(presets),
+            config_manager.presets,
+            kind="preset",
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
         )
         if error:
             return "", aspect_ratio, resolution, [], [], [], error
@@ -552,7 +566,7 @@ class ImageGenerationPublicAPI:
                 extra_persona_prompts,
                 extra_presets,
                 extra_personas,
-                extra_persona_images,
+                extra_template_images,
             ) = extract_templates_from_prompt(
                 extra_prompt,
                 config_manager.prompt_body_presets(),
@@ -565,7 +579,12 @@ class ImageGenerationPublicAPI:
             persona_prompts.extend(extra_persona_prompts)
             matched_presets.extend(extra_presets)
             matched_personas.extend(extra_personas)
-            persona_images.extend(extra_persona_images)
+            template_images.extend(extra_template_images)
+
+        if fixed_aspect_ratio:
+            aspect_ratio = fixed_aspect_ratio
+        if fixed_resolution:
+            resolution = fixed_resolution
 
         final_prompt = build_generation_prompt(
             preset_prompts=preset_prompts,
@@ -578,7 +597,7 @@ class ImageGenerationPublicAPI:
             resolution,
             matched_presets,
             matched_personas,
-            persona_images,
+            template_images,
             None,
         )
 
@@ -587,7 +606,7 @@ class ImageGenerationPublicAPI:
         *,
         reference_image_sources: Any,
         reference_image_data: list[ImageData] | None,
-        persona_images: list[tuple[str, str]],
+        template_images: list[tuple[str, str]],
         task_id: str,
         unified_msg_origin: str | None = None,
         request_source: str = DEFAULT_SOURCE,
@@ -597,7 +616,7 @@ class ImageGenerationPublicAPI:
             return []
         capabilities = plugin.generator.adapter.get_capabilities()
         has_references = bool(
-            persona_images or reference_image_sources or reference_image_data
+            template_images or reference_image_sources or reference_image_data
         )
         if not (capabilities & ImageCapability.IMAGE_TO_IMAGE):
             if has_references:
@@ -615,11 +634,11 @@ class ImageGenerationPublicAPI:
         workspace_dir = plugin.image_processor.workspace_dir_for_origin(
             unified_msg_origin
         )
-        if persona_images:
+        if template_images:
             images_data.extend(
-                await collect_reference_images_from_personas(
+                await collect_reference_images_from_templates(
                     plugin.image_processor,
-                    persona_images,
+                    template_images,
                     task_id=task_id,
                     log_context="PublicAPI",
                     workspace_dir=workspace_dir,

@@ -25,6 +25,7 @@ from ..config.templates import (
 from ..config.templates import (
     normalize_name_items as _normalize_name_items,
 )
+from ..generation.options import is_explicit_size
 from ..generation.reference_collector import (
     ContextReferenceImageNotFoundError,
     collect_tool_reference_images,
@@ -47,10 +48,10 @@ from .preset_text import (
     RESOLUTION_OPTIONS,
     _format_persona_detail,
     _format_preset_detail,
-    _validate_preset_content,
     normalize_preset_edit_action,
     normalize_preset_query_category,
     normalize_task_action,
+    validate_preset_options,
 )
 
 LOG = log_prefix("LLMTool")
@@ -90,7 +91,7 @@ async def _start_generation_task(
     cached_context_images: list[ImageData] | None = None,
     use_context_images: bool = False,
     avatar_references: Any = None,
-    persona_images: list[tuple[str, str]] | None = None,
+    template_images: list[tuple[str, str]] | None = None,
     preset_or_persona: str | None = None,
     preset_label: str = "预设",
     presets: list[str] | None = None,
@@ -158,7 +159,7 @@ async def _start_generation_task(
                 cached_context_images=cached_context_images,
                 use_context_images=use_context_images,
                 avatar_references=avatar_references,
-                persona_images=persona_images,
+                template_images=template_images,
                 task_id=task_id,
             )
         except ContextReferenceImageNotFoundError:
@@ -253,8 +254,8 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
     description: str = (
         "使用生图模型生成或修改图片；支持普通生图、多预设、自拍、人像、头像和多个人设照片。"
         "当用户要求自拍/头像/人像/某个人设或角色出镜时，应优先填写 persona。"
-        "修改用户当前消息、引用消息或此前聊天中的图片时，必须将 use_context_images 设为 true；"
-        "插件会自行取得实际图片，不要只在 prompt 中描述‘参考图’。"
+        "修改用户当前消息、引用消息或此前聊天中的图片时，必须将 use_context_images 设为 true，"
+        "不要只在 prompt 中描述‘参考图’。"
     )
     parameters: dict = Field(
         default_factory=lambda: {
@@ -262,15 +263,15 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
             "properties": {
                 "prompt": {
                     "type": "string",
-                    "description": "生图时使用的额外提示词。设置 preset 或 persona 时可留空。开启提示词正文匹配后，正文中出现的已配置名称才会自动应用。",
+                    "description": "生图时使用的额外提示词。设置 preset 或 persona 时可留空。",
                 },
                 "preset": {
                     "type": "string",
-                    "description": "可选。使用一个或多个已配置的预设名称，多个名称可用空格分隔；会按顺序拼接预设提示词，并可继承预设中的宽高比和分辨率。",
+                    "description": "可选。一个或多个已配置的预设名称，多个名称用空格分隔；预设可能自带宽高比和分辨率，无需重复指定。",
                 },
                 "persona": {
                     "type": "string",
-                    "description": "可选。使用一个或多个已配置的人设名称，多个名称可用空格分隔。当用户要求自拍、头像、人像、人设照片或某角色出镜时优先填写；会按顺序拼接人设描述，并在支持图生图时加入人设参考图。",
+                    "description": "可选。一个或多个已配置的人设名称，多个名称用空格分隔。用户要求自拍、头像、人像、人设照片或某角色出镜时优先填写。",
                 },
                 "aspect_ratio": {
                     "type": "string",
@@ -280,29 +281,29 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
                 },
                 "resolution": {
                     "type": "string",
-                    "description": "图片质量/分辨率。使用'不指定'时请求中不携带分辨率字段。",
+                    "description": "图片质量/分辨率。如果不确定，请使用'不指定'。",
                     "enum": RESOLUTION_OPTIONS,
                     "default": "不指定",
                 },
                 "image_count": {
                     "type": "integer",
-                    "description": "本次任务要生成的图片数量。不填时使用插件默认出图数量；超过配置上限时会自动截断。",
+                    "description": "本次任务要生成的图片数量。",
                     "minimum": 1,
                     "default": 1,
                 },
                 "avatar_references": {
                     "type": "array",
-                    "description": "可选。需要使用头像作为参考图时填写，'self' 表示机器人，'sender' 表示发送者，也可填写 QQ 号/用户 ID。",
+                    "description": "可选。使用头像作为参考图时填写：'self' 表示自己，'sender' 表示发送者，也可填写用户 ID。",
                     "items": {"type": "string"},
                 },
                 "reference_images": {
                     "type": "array",
-                    "description": "可选。参考图列表，支持 http(s) 网络图片 URL；本地图片仅允许当前会话 workspace和AstrBot temp 目录。",
+                    "description": "可选。参考图列表，支持 http(s) 网络图片 URL。",
                     "items": {"type": "string"},
                 },
                 "use_context_images": {
                     "type": "boolean",
-                    "description": "是否使用聊天中的图片作为改图参考。修改当前消息、引用消息、上一张图或近期聊天图片时必须设为 true；插件会自行取得图片，无需把图片 URL 复制到 reference_images。纯文生图设为 false。",
+                    "description": "是否使用聊天中的图片作为改图参考。修改当前消息、引用消息、上一张图或近期聊天图片时必须设为 true，插件会自动取图；纯文生图设为 false。",
                 },
             },
             "required": [],
@@ -321,19 +322,23 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
 
         prompt = str(kwargs.get("prompt", "") or "").strip()
         raw_aspect_ratio = kwargs.get("aspect_ratio")
+        raw_resolution = kwargs.get("resolution")
         aspect_ratio = raw_aspect_ratio or plugin.config_manager.default_aspect_ratio
-        resolution = (
-            kwargs.get("resolution") or plugin.config_manager.default_resolution
-        )
+        resolution = raw_resolution or plugin.config_manager.default_resolution
 
-        preset_prompts, aspect_ratio, resolution, matched_presets, _, error = (
-            resolve_named_templates(
-                normalize_name_items(kwargs.get("preset")),
-                plugin.config_manager.presets,
-                kind="preset",
-                aspect_ratio=str(aspect_ratio),
-                resolution=str(resolution),
-            )
+        (
+            preset_prompts,
+            aspect_ratio,
+            resolution,
+            matched_presets,
+            preset_images,
+            error,
+        ) = resolve_named_templates(
+            normalize_name_items(kwargs.get("preset")),
+            plugin.config_manager.presets,
+            kind="preset",
+            aspect_ratio=str(aspect_ratio),
+            resolution=str(resolution),
         )
         if error:
             return f"❌ {error}"
@@ -348,6 +353,7 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
         )
         if error:
             return f"❌ {error}"
+        template_images = [*preset_images, *persona_images]
         if plugin.config_manager.match_templates_in_prompt_body:
             (
                 prompt,
@@ -357,7 +363,7 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
                 extra_persona_prompts,
                 extra_presets,
                 extra_personas,
-                extra_persona_images,
+                extra_template_images,
             ) = extract_templates_from_prompt(
                 prompt,
                 plugin.config_manager.prompt_body_presets(),
@@ -370,7 +376,11 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
             persona_prompts.extend(extra_persona_prompts)
             matched_presets.extend(extra_presets)
             matched_personas.extend(extra_personas)
-            persona_images.extend(extra_persona_images)
+            template_images.extend(extra_template_images)
+        if is_explicit_size(raw_aspect_ratio):
+            aspect_ratio = raw_aspect_ratio
+        if is_explicit_size(raw_resolution):
+            resolution = raw_resolution
         prompt = build_generation_prompt(
             preset_prompts=preset_prompts,
             persona_prompts=persona_prompts,
@@ -440,7 +450,7 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
             cached_context_images=cached_context_images,
             use_context_images=use_context_images,
             avatar_references=kwargs.get("avatar_references"),
-            persona_images=persona_images,
+            template_images=template_images,
             preset_or_persona=preset_or_persona,
             preset_label=preset_label,
             presets=matched_presets,
@@ -456,8 +466,8 @@ class PresetQueryTool(FunctionTool[AstrAgentContext]):
 
     name: str = "query_image_presets"
     description: str = (
-        "查询生图预设或人设。默认只返回名称列表；当需要了解某个预设或人设的具体内容时，"
-        "填写 name 查看详情。查询到的预设名称可用于 generate_image 的 preset 参数，人设名称可用于 persona 参数。"
+        "查询可用的生图预设或人设。默认返回名称列表；填写 name 查看某个预设或人设的详情。"
+        "查询到的预设名称可用于 generate_image 的 preset 参数，人设名称可用于 persona 参数。"
     )
     parameters: dict = Field(
         default_factory=lambda: {
@@ -471,7 +481,7 @@ class PresetQueryTool(FunctionTool[AstrAgentContext]):
                 },
                 "name": {
                     "type": "string",
-                    "description": "可选。填写后查看指定预设或人设的具体内容；留空时只返回名称列表。",
+                    "description": "可选。填写后查看指定预设或人设的详情；留空只返回名称列表。",
                 },
             },
             "required": [],
@@ -535,8 +545,12 @@ class PresetQueryTool(FunctionTool[AstrAgentContext]):
         if not plugin.config_manager.presets:
             return "📋 当前没有预设"
         lines = ["📋 预设列表:"]
-        for idx, preset_name in enumerate(plugin.config_manager.presets, 1):
-            lines.append(f"{idx}. {preset_name}")
+        for idx, (preset_name, preset) in enumerate(
+            plugin.config_manager.presets.items(),
+            1,
+        ):
+            image_mark = "有参考图" if preset.image else "无参考图"
+            lines.append(f"{idx}. {preset_name} [{image_mark}]")
         return "\n".join(lines)
 
 
@@ -546,11 +560,8 @@ class PresetEditTool(FunctionTool[AstrAgentContext]):
 
     name: str = "edit_image_presets"
     description: str = (
-        "创建或删除生图预设。支持两种预设格式："
-        "1) 简单格式：name + prompt，prompt 直接写普通提示词；"
-        "2) 高级 JSON 格式：prompt 写 JSON 字符串，如 "
-        '{"prompt":"提示词","aspect_ratio":"16:9","resolution":"2K","description":"描述"}。'
-        "只编辑预设，不编辑人设。"
+        "创建或删除生图预设。创建时用 prompt 传入提示词，并可选用 aspect_ratio、"
+        "resolution 和 reference_image 补充预设参数。只编辑预设，不编辑人设。"
     )
     parameters: dict = Field(
         default_factory=lambda: {
@@ -567,7 +578,19 @@ class PresetEditTool(FunctionTool[AstrAgentContext]):
                 },
                 "prompt": {
                     "type": "string",
-                    "description": '创建预设时必填。可填写普通提示词，或填写高级 JSON 字符串：{"prompt":"提示词","aspect_ratio":"16:9","resolution":"2K","description":"描述"}。',
+                    "description": "创建预设时必填的预设提示词，直接填写普通提示词文本。",
+                },
+                "aspect_ratio": {
+                    "type": "string",
+                    "description": f"可选。预设宽高比，可选值：{'、'.join(ASPECT_RATIO_OPTIONS)}。",
+                },
+                "resolution": {
+                    "type": "string",
+                    "description": f"可选。预设分辨率，可选值：{'、'.join(RESOLUTION_OPTIONS)}。",
+                },
+                "reference_image": {
+                    "type": "string",
+                    "description": "可选。预设参考图，支持 http(s) 图片 URL。",
                 },
             },
             "required": ["action", "name"],
@@ -606,9 +629,17 @@ class PresetEditTool(FunctionTool[AstrAgentContext]):
             prompt = str(kwargs.get("prompt", "") or "").strip()
             if not prompt:
                 return "❌ 请提供预设内容"
-            if error := _validate_preset_content(prompt):
+            ratio = str(kwargs.get("aspect_ratio", "") or "").strip()
+            size = str(kwargs.get("resolution", "") or "").strip()
+            if error := validate_preset_options(ratio, size):
                 return f"❌ {error}"
-            plugin.config_manager.save_preset(name, prompt)
+            plugin.config_manager.save_preset_template(
+                name=name,
+                prompt=prompt,
+                aspect_ratio=ratio,
+                resolution=size,
+                image=str(kwargs.get("reference_image", "") or "").strip(),
+            )
             return f"✅ 预设已保存: {name}"
 
         if action == "delete_preset":
@@ -627,10 +658,9 @@ class ImageTaskTool(FunctionTool[AstrAgentContext]):
 
     name: str = "manage_image_tasks"
     description: str = (
-        "管理当前会话的生图任务。list 只列出正在进行的任务；"
-        "detail 可查看仍保留记录的进行中或已结束任务，并会显示结果是否已发送给用户；"
-        "cancel 只能取消仍在排队/运行/取消中的任务。"
-        "已送达的结果不要重复发送给用户。"
+        "管理当前会话的生图任务。list 列出正在进行的任务；"
+        "detail 查看进行中或已结束任务的详情；cancel 取消仍在排队或运行中的任务。"
+        "已发送给用户的结果不要重复发送。"
     )
     parameters: dict = Field(
         default_factory=lambda: {
@@ -644,7 +674,7 @@ class ImageTaskTool(FunctionTool[AstrAgentContext]):
                 },
                 "task": {
                     "type": "string",
-                    "description": "任务编号或任务ID。detail 和 cancel 时填写；编号来自 list 返回的正在进行任务列表。已结束任务只能用任务ID查看详情。",
+                    "description": "任务编号或任务ID。detail 和 cancel 时填写；编号取自 list 的结果，已结束任务只能用任务ID。",
                 },
             },
             "required": [],

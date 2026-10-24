@@ -11,6 +11,9 @@ from astrbot.api import logger
 from ..shared.logging import log_prefix
 
 LOG = log_prefix("Config")
+# Key written by the dashboard template_list editor for every template entry.
+TEMPLATE_KEY_FIELD = "__template_key"
+
 SCHEMA_DEFAULT_FACTORIES: dict[str, Any] = {
     "int": int,
     "float": float,
@@ -50,8 +53,6 @@ MIN_NUMBER_VALUES: dict[str, int | float] = {
 
 class ConfigValidator:
     """Validate supported config values with schema metadata."""
-
-    TEMPLATE_KEY_FIELD = "__template_key"
 
     def __init__(self, schema: Mapping[str, Any] | None):
         self._schema = schema if isinstance(schema, Mapping) else {}
@@ -133,7 +134,7 @@ class ConfigValidator:
                 changed = True
                 continue
 
-            template_key = str(item.get(self.TEMPLATE_KEY_FIELD) or "").strip()
+            template_key = str(item.get(TEMPLATE_KEY_FIELD) or "").strip()
             template_meta = templates.get(template_key)
             if not isinstance(template_meta, Mapping):
                 changed = True
