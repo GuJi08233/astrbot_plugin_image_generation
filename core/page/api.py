@@ -17,6 +17,7 @@ from astrbot.api.web import (
     request,
 )
 
+from ..adapters.generator import create_adapter
 from ..generation.image_processor import GENERATED_IMAGE_EXTENSIONS
 from ..shared.logging import safe_log_text
 from ..shared.types import ImageCapability
@@ -117,6 +118,40 @@ class ImageGenerationPageAPI(PagePayloadMixin, PageStatsMixin):
                 models.append(f"{provider_name}/{model}" if provider_name else model)
         return models
 
+    def _model_capabilities(self) -> dict[str, dict[str, bool]]:
+        """Return the adapter capabilities declared by each selectable model.
+
+        Returns:
+            A mapping of `provider/model` to the capability flags the Page uses
+            to enable or disable the per-model form controls.
+        """
+        capabilities: dict[str, dict[str, bool]] = {}
+        for provider in getattr(
+            self.plugin.config_manager, "_all_provider_configs", []
+        ):
+            try:
+                provider_capabilities = create_adapter(provider).get_capabilities()
+            except ValueError:
+                # Unknown adapter types fail on submit; the Page falls back to
+                # the capability flags of the active model in that case.
+                continue
+            flags = {
+                "supports_image_to_image": bool(
+                    provider_capabilities & ImageCapability.IMAGE_TO_IMAGE
+                ),
+                "supports_aspect_ratio": bool(
+                    provider_capabilities & ImageCapability.ASPECT_RATIO
+                ),
+                "supports_resolution": bool(
+                    provider_capabilities & ImageCapability.RESOLUTION
+                ),
+            }
+            provider_name = provider.name.strip()
+            for model in provider.available_models:
+                model_key = f"{provider_name}/{model}" if provider_name else model
+                capabilities[model_key] = flags
+        return capabilities
+
     async def page_state(self):
         """Return plugin state used to initialize the Dashboard Page.
 
@@ -139,6 +174,7 @@ class ImageGenerationPageAPI(PagePayloadMixin, PageStatsMixin):
                 "has_api_key": plugin.has_required_api_key(),
                 "current_model": current_model,
                 "available_models": self._available_models(),
+                "model_capabilities": self._model_capabilities(),
                 "default_image_count": plugin.config_manager.default_image_count,
                 "max_image_count": plugin.config_manager.max_image_count,
                 "default_aspect_ratio": plugin.config_manager.default_aspect_ratio,

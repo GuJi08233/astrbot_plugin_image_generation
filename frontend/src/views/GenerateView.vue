@@ -371,14 +371,21 @@ let formInitialized = false;
 const presets = computed(() => props.pluginState?.presets || []);
 const personas = computed(() => props.pluginState?.personas || []);
 const maxImageCount = computed(() => props.pluginState?.max_image_count || 8);
+// Capability flags follow the model picked in the form; the active model only
+// acts as the fallback while the model list is unavailable.
+const selectedModelCapabilities = computed(
+  () =>
+    (props.pluginState?.model_capabilities || {})[form.model] ||
+    props.pluginState,
+);
 const supportsAspectRatio = computed(
-  () => props.pluginState?.supports_aspect_ratio !== false,
+  () => selectedModelCapabilities.value?.supports_aspect_ratio !== false,
 );
 const supportsResolution = computed(
-  () => props.pluginState?.supports_resolution !== false,
+  () => selectedModelCapabilities.value?.supports_resolution !== false,
 );
 const supportsImageToImage = computed(
-  () => props.pluginState?.supports_image_to_image !== false,
+  () => selectedModelCapabilities.value?.supports_image_to_image !== false,
 );
 
 const modelOptions = computed(() =>

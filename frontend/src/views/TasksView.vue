@@ -737,8 +737,12 @@ onBeforeUnmount(() => {
   color: rgba(var(--v-theme-on-surface), 0.55);
 }
 
+/* The list keeps a 54vh floor but grows to fill the panel (which matches the
+   detail column), scrolling internally: it must not expand the whole page with
+   every task, nor leave a gap between the last row and the pager. */
 .task-list {
-  max-height: 54vh;
+  flex-basis: 0;
+  min-height: 54vh;
   overflow-y: auto;
 }
 
