@@ -7,7 +7,6 @@ import json
 import os
 from collections.abc import Callable, Coroutine
 from contextlib import suppress
-from difflib import SequenceMatcher
 from typing import Any
 
 from astrbot.api import logger
@@ -23,7 +22,7 @@ from astrbot.core.provider.entities import ProviderRequest
 from ..config.manager import ConfigManager
 from ..formatting.result import format_generation_failure_message
 from ..generation.image_processor import ImageProcessor
-from ..shared.logging import log_prefix, safe_log_error_body, safe_log_text
+from ..shared.logging import log_prefix, safe_log_text
 from ..tasks.manager import TaskManager
 from ..tasks.models import GenerationTaskRecord, GenerationTaskStatus
 from .tools import DeliverySendMessageToUserTool
@@ -32,38 +31,22 @@ IMAGE_GENERATION_TASK_WOKE_SYSTEM_PROMPT = (
     "You are an autonomous proactive agent.\n\n"
     "You are awakened because an image generation task you initiated earlier has "
     "completed. The completed task payload is provided in the user message.\n"
-    "# IMPORTANT RULES\n"
-    "1. This is NOT a normal chat turn. Do NOT greet the user. Do NOT ask questions "
-    "unless strictly necessary.\n"
-    "2. Deliver the task result to the user with the `send_message_to_user` tool; "
-    "otherwise the user will not see it.\n"
-    "3. If the task succeeded, send every generated image exactly once, using "
-    "type='image' and the provided local path. Send all images of this task in one "
-    "call when possible, and do NOT add plain text components to that call.\n"
-    "4. If the task failed, send the failure reason as a single `plain` component.\n"
-    "5. Your final reply text is delivered to the user right after the images: write "
-    "the user-facing wording there and keep it short. Do not repeat content you "
-    "already sent with the tool, and do not write process wording such as 'done'.\n"
-    "6. Each generated image must be delivered exactly once: never send the same "
-    "image twice, and do not call `generate_image` again for this completed task.\n"
-    "7. If generated images are attached in this request, review them before "
-    "deciding the final wording. If images are not attached, use the provided paths.\n"
+    "# CONTEXT\n"
+    "1. The images already exist and their paths are listed in the payload. Never "
+    "call `generate_image` again for this completed task.\n"
+    "2. `send_message_to_user` is the only channel to the user here: it is the tool "
+    "description's 'proactively message the user' case, so your final reply text is "
+    "not delivered.\n"
+    "3. Decide from the conversation whether the user should see this result now, "
+    "later, or not at all. Staying silent is a valid choice when the images are "
+    "working material for your own next steps, while a failed task is usually worth "
+    "telling the user about.\n"
+    "4. When you do report, send everything the user should see in one call: images "
+    "with type='image' and the given path, wording with type='plain'. Send each "
+    "image at most once.\n"
     "# IMAGE GENERATION TASK CONTEXT\n"
     "The completed task payload is provided in the user message."
 )
-
-
-def _text_similarity(left: str, right: str) -> float:
-    """Return how similar two short messages are.
-
-    Args:
-        left: First message text.
-        right: Second message text.
-
-    Returns:
-        Similarity ratio between 0.0 and 1.0.
-    """
-    return SequenceMatcher(None, left.strip(), right.strip()).ratio()
 
 
 class LLMResultHandler:
@@ -167,10 +150,8 @@ class LLMResultHandler:
             [
                 "",
                 "内部指引:",
-                "- 当前仅表示任务已提交，不能向用户声明图片已完成。",
-                "- 等待插件唤醒并提供最终结果后，再通过 send_message_to_user 发送图片或失败原因。",
-                "- 唤醒后图片调用只放图片组件，面向用户的说明写在最终回复里，不要重复发送。",
-                "- 最终结果到达前，除非上下文确有需要，否则不要主动发送额外消息。",
+                "- 当前仅表示任务已提交，图片尚未完成，不要向用户声明已完成。",
+                "- 结果就绪后会唤醒你并提供图片路径，届时由你判断是否需要发送给用户。",
                 "- 不要重复调用 generate_image。",
             ]
         )
@@ -248,7 +229,7 @@ class LLMResultHandler:
         *,
         reason: str,
     ) -> str:
-        """Directly send task result if the awakened AI cannot handle it.
+        """Directly send task result when the wake-up turn could not run.
 
         Args:
             record: Completed generation task record.
@@ -260,7 +241,7 @@ class LLMResultHandler:
 
         """
         logger.warning(
-            f"{log_prefix('Task', record.task_id)} AI 处理生图结果失败，改为直接发送: {safe_log_text(reason, 200)}"
+            f"{log_prefix('Task', record.task_id)} 唤醒轮次未能完成，改为直接发送: {safe_log_text(reason, 200)}"
         )
         chain = self._build_fallback_chain(record)
         sent = await self.context.send_message(record.unified_msg_origin, chain)
@@ -272,118 +253,6 @@ class LLMResultHandler:
             paths=[] if record.error else record.result_paths,
         )
         return chain.get_plain_text()
-
-    def _missing_delivered_images(
-        self,
-        record: GenerationTaskRecord,
-        delivered_paths: list[str],
-    ) -> list[str]:
-        """Return task result images the awakened AI did not deliver.
-
-        Args:
-            record: Completed generation task record.
-            delivered_paths: Image paths or URLs the AI tool delivered.
-
-        Returns:
-            Result image paths that still need to be sent to the user.
-
-        """
-        # 模型可能改写路径（相对路径、URL 下载结果），因此同时按归一化路径和
-        # 文件名比对，避免已送达的图片被重复补发。
-        normalized = {
-            os.path.normcase(os.path.normpath(path)) for path in delivered_paths
-        }
-        delivered_names = {
-            os.path.normcase(os.path.basename(path.rstrip("/\\")))
-            for path in delivered_paths
-            if path
-        }
-        return [
-            path
-            for path in record.result_paths
-            if os.path.normcase(os.path.normpath(path)) not in normalized
-            and os.path.normcase(os.path.basename(path)) not in delivered_names
-        ]
-
-    async def _send_missing_images(
-        self,
-        record: GenerationTaskRecord,
-        image_paths: list[str],
-    ) -> list[str]:
-        """Send result images the AI left out, in configured batches.
-
-        Args:
-            record: Completed generation task record.
-            image_paths: Result image paths still missing from the delivery.
-
-        Returns:
-            Image paths that were sent successfully.
-
-        """
-        max_per_message = max(1, self.config_manager.max_images_per_message)
-        sent_paths: list[str] = []
-        for start in range(0, len(image_paths), max_per_message):
-            batch = image_paths[start : start + max_per_message]
-            chain = MessageChain()
-            for file_path in batch:
-                chain.file_image(file_path)
-            try:
-                if await self.context.send_message(record.unified_msg_origin, chain):
-                    sent_paths.extend(batch)
-            except Exception as exc:
-                logger.error(
-                    f"{log_prefix('Task', record.task_id)} 补发生成图片失败: "
-                    f"{safe_log_error_body(exc, 160)}",
-                    exc_info=True,
-                )
-        if sent_paths:
-            logger.info(
-                f"{log_prefix('Task', record.task_id)} 已补发 {len(sent_paths)} 张未送达的生成图片"
-            )
-        return sent_paths
-
-    async def _send_closing_note(
-        self,
-        record: GenerationTaskRecord,
-        text: str,
-        *,
-        delivered_texts: list[str],
-        min_similarity: float = 0.6,
-    ) -> None:
-        """Send the proactive turn's closing note as a follow-up message.
-
-        Args:
-            record: Completed generation task record.
-            text: The awakened AI's final reply text.
-            delivered_texts: Plain texts already delivered by the tool in this run.
-            min_similarity: Above this similarity to an already delivered text the
-                note is treated as a repeat and skipped.
-
-        """
-        note = text.strip()
-        if not note:
-            return
-        for delivered in delivered_texts:
-            if delivered == note or _text_similarity(delivered, note) >= min_similarity:
-                logger.debug(
-                    f"{log_prefix('Task', record.task_id)} 收尾文案与已发送内容重复，跳过"
-                )
-                return
-        try:
-            if await self.context.send_message(
-                record.unified_msg_origin,
-                MessageChain().message(note),
-            ):
-                logger.debug(
-                    f"{log_prefix('Task', record.task_id)} 已发送收尾文案: "
-                    f"{safe_log_text(note, 80)}"
-                )
-        except Exception as exc:
-            logger.error(
-                f"{log_prefix('Task', record.task_id)} 发送收尾文案失败: "
-                f"{safe_log_error_body(exc, 160)}",
-                exc_info=True,
-            )
 
     async def _save_task_note_to_history(
         self,
@@ -465,7 +334,9 @@ class LLMResultHandler:
                     f"{log_prefix('Task', task_id)} 结果已发送给用户，跳过兜底发送"
                 )
                 return
-            await self._send_fallback(record, reason=str(exc))
+            # 只有唤醒轮次本身异常（AI 没能做出判断）时才兜底直发；
+            # AI 正常结束但选择不发送属于它的判断，不会被兜底。
+            await self._send_fallback(record, reason=f"唤醒轮次异常: {exc}")
 
     async def _run_generation_result_agent(
         self,
@@ -529,11 +400,9 @@ class LLMResultHandler:
         req.prompt = (
             "Proceed according to your system instructions. "
             "Output using same language as previous conversation. "
-            "Use `send_message_to_user` to deliver the image generation result now. "
-            "If the task succeeded, send every generated image exactly once with "
-            "type='image' and the provided path(s), without plain text in the same "
-            "call. If it failed, send the failure reason as a single plain text. "
-            "Put the user-facing wording in your final reply."
+            "Review the completed image generation task and decide whether the user "
+            "should see the result; deliver it with `send_message_to_user` when they "
+            "should, otherwise end this turn without sending anything."
         )
         req.extra_user_content_parts.append(
             TextPart(
@@ -584,53 +453,24 @@ class LLMResultHandler:
             await result.reset_coro
 
         runner = result.agent_runner
-        closing_text = ""
-        async for resp in runner.step_until_done(30):
-            # 投递由工具完成；这里让本轮完整跑完，并接住模型的最终回复作为随图文案
-            if resp.type != "llm_result":
-                continue
-            chain = resp.data.get("chain") if isinstance(resp.data, dict) else None
-            if chain is None or chain.type == "reasoning":
-                # 推理链不是面向用户的文案，核心也不会把它发给用户
-                continue
-            text = chain.get_plain_text().strip()
-            if text:
-                closing_text = text
+        async for _resp in runner.step_until_done(30):
+            # 是否发送由 AI 决定，本轮不代它发送任何内容：结果投递只经由
+            # send_message_to_user 工具完成，这里只负责把本轮跑完。
+            pass
 
         llm_resp = runner.get_final_llm_resp()
-        final_text = (llm_resp.completion_text or "").strip() if llm_resp else ""
-        if final_text:
-            closing_text = final_text
-        delivery_covered_note = False
         # 投递是否发生以投递工具自身的记录为准（它只在核心工具真正发送成功后写入）。
-        if not delivery_tool.delivered:
-            fallback_text = await self._send_fallback(
-                record,
-                reason="AI 未通过 send_message_to_user 发送结果",
-            )
-            # 兜底文案已经说明结果，收尾文案不再重复一遍
-            delivery_covered_note = bool(fallback_text and closing_text)
-        else:
-            missing_paths = self._missing_delivered_images(
-                record,
-                delivery_tool.delivered_paths,
-            )
-            resent_paths = (
-                await self._send_missing_images(record, missing_paths)
-                if missing_paths
-                else []
-            )
+        # 注意 delivered 只说明有内容发出，AI 也可能只发了文字，所以图片是否送达要看
+        # delivered_paths。
+        if delivery_tool.delivered:
             self.task_manager.mark_generation_task_delivered(
                 record.task_id,
-                paths=[*delivery_tool.delivered_paths, *resent_paths],
+                paths=delivery_tool.delivered_paths,
             )
-
-        # 图片投递完成后再补一句文案，形成「先图片、后文案」的两条消息
-        if not delivery_covered_note:
-            await self._send_closing_note(
-                record,
-                closing_text,
-                delivered_texts=delivery_tool.delivered_texts,
+        else:
+            logger.debug(
+                f"{log_prefix('Task', record.task_id)} AI 本轮未向用户发送内容，"
+                "结果仅留在会话历史中"
             )
 
         summary_note = (
@@ -639,11 +479,27 @@ class LLMResultHandler:
             f"delivered={str(record.delivered).lower()}, "
             f"error={record.error or ''}"
         )
-        if record.delivered:
+        # 历史 note 统一使用投递路径（AstrBot 临时目录）：这是核心发送工具唯一允许
+        # 发送的位置，持久化目录的路径模型即使拿到也用不了；投递路径是持久化结果的
+        # 同名链接，因此按文件名判断哪些图已经发过。
+        delivered_names = {os.path.basename(path) for path in record.delivered_paths}
+        unsent_paths = [
+            path
+            for path in delivery_paths
+            if os.path.basename(path) not in delivered_names
+        ]
+        if record.delivered_paths:
             summary_note += (
                 ", delivered_paths="
                 f"{json.dumps(record.delivered_paths, ensure_ascii=False)}. "
-                "This task result was already sent to the user; do not send it again."
+                "These images were already sent to the user; do not send them again."
+            )
+        if unsent_paths:
+            summary_note += (
+                ", unsent_paths="
+                f"{json.dumps(unsent_paths, ensure_ascii=False)}. "
+                "These images were generated but not sent to the user; send them only "
+                "when the conversation calls for it."
             )
         if llm_resp and llm_resp.completion_text:
             summary_note += f" AI response: {llm_resp.completion_text}"
