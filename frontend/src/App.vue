@@ -249,8 +249,11 @@ body {
   margin: 0;
 }
 
+/* The header actions block is content-sized, so a flex basis wider than the
+   select's own content leaves no room for the refresh button and wraps it onto
+   a second row. Let the select size itself and only clamp its width. */
 .page-model-select {
-  flex: 1 1 240px;
+  flex: 1 1 auto;
   min-width: 200px;
   max-width: 320px;
 }

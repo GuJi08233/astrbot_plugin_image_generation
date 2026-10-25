@@ -13,49 +13,60 @@ from ..shared.types import (
 )
 
 
+def create_adapter(config: AdapterConfig):
+    """Create one adapter instance from configuration.
+
+    Args:
+        config: Adapter configuration to instantiate.
+
+    Returns:
+        The adapter instance matching `config.type`.
+
+    Raises:
+        ValueError: If the configured adapter type is not supported.
+    """
+    from ...adapter import (
+        AgnesAIAdapter,
+        CodexResponsesAdapter,
+        ComfyUIAdapter,
+        CustomHTTPAdapter,
+        GeminiAdapter,
+        GiteeAIAdapter,
+        GrokAdapter,
+        ModelScopeAdapter,
+        OpenAIAdapter,
+        OpenAIChatAdapter,
+        SiliconFlowAdapter,
+        VolcengineArkAdapter,
+    )
+
+    adapter_map: dict[AdapterType, type] = {
+        AdapterType.GEMINI: GeminiAdapter,
+        AdapterType.OPENAI_CHAT: OpenAIChatAdapter,
+        AdapterType.OPENAI: OpenAIAdapter,
+        AdapterType.SILICONFLOW: SiliconFlowAdapter,
+        AdapterType.VOLCENGINE_ARK: VolcengineArkAdapter,
+        AdapterType.GITEE_AI: GiteeAIAdapter,
+        AdapterType.AGNES_AI: AgnesAIAdapter,
+        AdapterType.GROK: GrokAdapter,
+        AdapterType.CODEX_RESPONSES: CodexResponsesAdapter,
+        AdapterType.MODELSCOPE: ModelScopeAdapter,
+        AdapterType.CUSTOM_HTTP: CustomHTTPAdapter,
+        AdapterType.COMFYUI: ComfyUIAdapter,
+    }
+
+    adapter_cls = adapter_map.get(config.type)
+    if not adapter_cls:
+        raise ValueError(f"不支持的适配器类型: {config.type}")
+    return adapter_cls(config)
+
+
 class ImageGenerator:
     """Adapter orchestrator for dispatching image generation requests."""
 
     def __init__(self, adapter_config: AdapterConfig):
         self.adapter_config = adapter_config
-        self.adapter = self._create_adapter(adapter_config)
-
-    def _create_adapter(self, config: AdapterConfig):
-        """Create an adapter instance from configuration."""
-        from ...adapter import (
-            AgnesAIAdapter,
-            CodexResponsesAdapter,
-            ComfyUIAdapter,
-            CustomHTTPAdapter,
-            GeminiAdapter,
-            GiteeAIAdapter,
-            GrokAdapter,
-            ModelScopeAdapter,
-            OpenAIAdapter,
-            OpenAIChatAdapter,
-            SiliconFlowAdapter,
-            VolcengineArkAdapter,
-        )
-
-        adapter_map: dict[AdapterType, type] = {
-            AdapterType.GEMINI: GeminiAdapter,
-            AdapterType.OPENAI_CHAT: OpenAIChatAdapter,
-            AdapterType.OPENAI: OpenAIAdapter,
-            AdapterType.SILICONFLOW: SiliconFlowAdapter,
-            AdapterType.VOLCENGINE_ARK: VolcengineArkAdapter,
-            AdapterType.GITEE_AI: GiteeAIAdapter,
-            AdapterType.AGNES_AI: AgnesAIAdapter,
-            AdapterType.GROK: GrokAdapter,
-            AdapterType.CODEX_RESPONSES: CodexResponsesAdapter,
-            AdapterType.MODELSCOPE: ModelScopeAdapter,
-            AdapterType.CUSTOM_HTTP: CustomHTTPAdapter,
-            AdapterType.COMFYUI: ComfyUIAdapter,
-        }
-
-        adapter_cls = adapter_map.get(config.type)
-        if not adapter_cls:
-            raise ValueError(f"不支持的适配器类型: {config.type}")
-        return adapter_cls(config)
+        self.adapter = create_adapter(adapter_config)
 
     async def generate(self, request: GenerationRequest) -> GenerationResult:
         """Generate images for one request."""
@@ -131,7 +142,7 @@ class ImageGenerator:
         if self.adapter:
             await self.adapter.close()
         self.adapter_config = adapter_config
-        self.adapter = self._create_adapter(adapter_config)
+        self.adapter = create_adapter(adapter_config)
 
     async def close(self) -> None:
         """Close the active adapter."""
