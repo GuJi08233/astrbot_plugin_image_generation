@@ -759,16 +759,13 @@ class ImageTaskTool(FunctionTool[AstrAgentContext]):
 class DeliverySendMessageToUserTool(SendMessageToUserTool):
     """Proactive-delivery variant of `send_message_to_user`.
 
-    Proactive turns must deliver a task result exactly once. This variant records
-    the image paths/URLs and plain texts it actually delivered so the caller can
-    verify the delivery, resend anything the AI left out and avoid repeating the
-    AI wording, and it refuses to deliver content that was already delivered
-    within the same run.
+    Whether a proactive turn reports its result is the AI's own decision, so this
+    variant only records what the AI actually delivered (for task bookkeeping)
+    and refuses to deliver the same content twice within one run.
     """
 
     delivered: bool = False
     delivered_paths: list[str] = Field(default_factory=list)
-    delivered_texts: list[str] = Field(default_factory=list)
     sent_signatures: list[str] = Field(default_factory=list)
 
     async def call(
@@ -786,13 +783,6 @@ class DeliverySendMessageToUserTool(SendMessageToUserTool):
             if isinstance(item, dict)
             and (item.get("path") or item.get("url"))
             and str(item.get("type", "")).lower() != "plain"
-        ]
-        plain_texts = [
-            str(item.get("text") or "").strip()
-            for item in messages
-            if isinstance(item, dict)
-            and str(item.get("type", "")).lower() == "plain"
-            and str(item.get("text") or "").strip()
         ]
         delivered = {
             os.path.normcase(os.path.normpath(path)) for path in self.delivered_paths
@@ -820,9 +810,6 @@ class DeliverySendMessageToUserTool(SendMessageToUserTool):
         for path in image_paths:
             if path not in self.delivered_paths:
                 self.delivered_paths.append(path)
-        for text in plain_texts:
-            if text not in self.delivered_texts:
-                self.delivered_texts.append(text)
         return result
 
 
