@@ -8,3 +8,4 @@ data/
 TODO.md
 tests/*
 !tests/test_novelai_adapter.py
+!tests/test_page_sizes.mjs

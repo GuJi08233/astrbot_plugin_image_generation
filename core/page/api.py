@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import math
 import mimetypes
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from astrbot.api import logger
 from astrbot.api.web import (
     PluginUploadFile,
     error_response,
@@ -19,10 +21,8 @@ from astrbot.api.web import (
     request,
 )
 
-from astrbot.api import logger
-
 from ..shared.logging import log_prefix, safe_log_text
-from ..shared.types import ImageCapability
+from ..shared.types import AdapterType, ImageCapability
 from ..tasks.models import GenerationTaskRecord
 
 PLUGIN_NAME = "astrbot_plugin_image_generation"
@@ -577,11 +577,24 @@ class ImageGenerationPageAPI:
             f"{adapter_config.name}/{adapter_config.model}" if adapter_config else ""
         )
         available_models: list[str] = []
+        model_settings: dict[str, dict[str, Any]] = {}
         for provider in getattr(plugin.config_manager, "_all_provider_configs", []):
             provider_name = provider.name.strip()
             for model in provider.available_models:
-                available_models.append(
-                    f"{provider_name}/{model}" if provider_name else model
+                model_name = f"{provider_name}/{model}" if provider_name else model
+                available_models.append(model_name)
+                model_settings[model_name] = {"adapter_type": provider.type.value}
+                if provider.type == AdapterType.NOVELAI:
+                    model_settings[model_name].update(
+                        width=provider.extra.get("width", 832),
+                        height=provider.extra.get("height", 1216),
+                    )
+        if adapter_config and current_model not in model_settings:
+            model_settings[current_model] = {"adapter_type": adapter_config.type.value}
+            if adapter_config.type == AdapterType.NOVELAI:
+                model_settings[current_model].update(
+                    width=adapter_config.extra.get("width", 832),
+                    height=adapter_config.extra.get("height", 1216),
                 )
         return json_response(
             {
@@ -589,6 +602,7 @@ class ImageGenerationPageAPI:
                 "has_api_key": plugin.has_required_api_key(),
                 "current_model": current_model,
                 "available_models": available_models,
+                "model_settings": model_settings,
                 "default_image_count": plugin.config_manager.default_image_count,
                 "max_image_count": plugin.config_manager.max_image_count,
                 "default_aspect_ratio": plugin.config_manager.default_aspect_ratio,
@@ -1349,6 +1363,44 @@ class ImageGenerationPageAPI:
                 )
                 plugin.generation_executor.update_generator(plugin.generator)
 
+        image_size = None
+        has_width = "width" in payload
+        has_height = "height" in payload
+        adapter_config = plugin.config_manager.adapter_config
+        is_novelai = bool(adapter_config and adapter_config.type == AdapterType.NOVELAI)
+        if has_width != has_height:
+            return error_response("图片宽度和高度必须同时指定", status_code=400)
+        if (has_width or has_height) and not is_novelai:
+            return error_response("仅 NovelAI 支持指定像素宽高", status_code=400)
+        if is_novelai:
+            raw_dimensions = (
+                payload.get("width", adapter_config.extra.get("width", 832)),
+                payload.get("height", adapter_config.extra.get("height", 1216)),
+            )
+            dimensions: list[int] = []
+            try:
+                for raw in raw_dimensions:
+                    value = float(raw)
+                    if (
+                        isinstance(raw, bool)
+                        or not math.isfinite(value)
+                        or not value.is_integer()
+                    ):
+                        raise ValueError("Image dimensions must be finite integers")
+                    dimensions.append(int(value))
+            except (TypeError, ValueError, OverflowError):
+                return error_response("图片宽高必须为正整数", status_code=400)
+            width, height = dimensions
+            if (
+                not all(64 <= value <= 2048 and value % 64 == 0 for value in dimensions)
+                or width * height > 3_145_728
+            ):
+                return error_response(
+                    "图片宽高必须是 64–2048 内的 64 倍数，且总面积不超过 3,145,728 像素",
+                    status_code=400,
+                )
+            image_size = (width, height)
+
         # Page generation runs from Dashboard auth context. Prefer the signed-in
         # WebUI username so overview statistics can attribute tasks correctly.
         webui_username = str(getattr(request, "username", None) or "").strip()
@@ -1363,6 +1415,7 @@ class ImageGenerationPageAPI:
             image_count=image_count,
             aspect_ratio=aspect_ratio,
             resolution=resolution,
+            image_size=image_size,
             reference_image_sources=reference_sources,
             presets=presets,
             personas=personas,

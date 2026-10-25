@@ -160,15 +160,29 @@
                 <input id="imageCountInput" min="1" type="number" />
               </label>
 
-              <label class="field" for="aspectRatioSelect">
+              <label class="field" id="aspectRatioField" for="aspectRatioSelect">
                 <span data-i18n="form.aspectRatio">宽高比</span>
                 <select id="aspectRatioSelect"></select>
               </label>
 
-              <label class="field" for="resolutionSelect">
+              <label class="field" id="resolutionField" for="resolutionSelect">
                 <span data-i18n="form.resolution">分辨率</span>
                 <select id="resolutionSelect"></select>
               </label>
+
+              <label class="field" id="imageWidthField" for="imageWidthInput" hidden>
+                <span data-i18n="form.imageWidth">图片宽度（像素）</span>
+                <input id="imageWidthInput" min="64" max="2048" step="64" type="number" disabled />
+              </label>
+
+              <label class="field" id="imageHeightField" for="imageHeightInput" hidden>
+                <span data-i18n="form.imageHeight">图片高度（像素）</span>
+                <input id="imageHeightInput" min="64" max="2048" step="64" type="number" disabled />
+              </label>
+
+              <div class="field full-span" id="imageSizeHint" hidden>
+                <small data-i18n="form.imageSizeHint">宽高须为 64–2048 内的 64 倍数，总面积不超过 3,145,728 像素。自定义尺寸可能收费，仍受供应商 Gems 报价上限限制。</small>
+              </div>
 
               <div class="field full-span">
                 <div class="field-title">

@@ -33,6 +33,10 @@
         "imageCount": "生成数量",
         "aspectRatio": "宽高比",
         "resolution": "分辨率",
+        "imageWidth": "图片宽度（像素）",
+        "imageHeight": "图片高度（像素）",
+        "imageSizeHint": "宽高须为 64–2048 内的 64 倍数，总面积不超过 3,145,728 像素。自定义尺寸可能收费，仍受供应商 Gems 报价上限限制。",
+        "invalidImageSize": "请填写 64–2048 内的 64 倍数宽高，且总面积不超过 3,145,728 像素。",
         "presets": "预设",
         "personas": "人设",
         "optional": "可选",
@@ -221,10 +225,10 @@
         },
         "novelai": {
           "name": "NovelAI 原生 JSON 接口",
-          "hint": "使用 NovelAI 原生请求结构调用 /v1/nai/generate-image；支持文生图与单参考图图生图，返回 JSON Base64 图片。",
+          "hint": "使用 NovelAI 原生请求结构，先报价再生成。聊天指令与 LLM 工具仅使用四种标准尺寸；WebUI 可手动填写宽高，仍受单次请求 Gems 上限保护。支持文生图与单参考图图生图，返回 JSON Base64 图片。",
           "base_url": {
             "description": "接口地址",
-            "hint": "默认使用 https://nai.rinko.ai，调用 /v1/nai/generate-image；需要支持原生请求体和 JSON 图片响应的兼容服务。"
+            "hint": "默认使用 https://nai.rinko.ai；兼容服务需同时支持 /ai/generate-image/quote 报价和 /v1/nai/generate-image 原生请求体、JSON 图片响应。"
           },
           "proxy": {
             "description": "代理地址",
@@ -240,7 +244,7 @@
           },
           "capability_options": {
             "description": "模型能力",
-            "hint": "支持文生图、单参考图图生图和宽高比；全局分辨率不生效，图片尺寸由下方宽高配置或请求宽高比决定。",
+            "hint": "支持文生图、单参考图图生图和宽高比。聊天/LLM 将比例匹配到 512×512、832×1216、1216×832、1024×1024；WebUI 可手动填写宽高。全局分辨率不生效；标准尺寸不保证图生图或高步数免费。",
             "labels": [
               "文生图",
               "图生图",
@@ -255,13 +259,17 @@
             "description": "最大尝试次数覆盖",
             "hint": "默认 1 表示仅发送一次；填 0 使用运行控制的设置。仅传输异常重试，复用同一幂等键、请求体和 API Key；HTTP 错误与无效结果不重发，需在服务端核对原任务。"
           },
+          "max_cost_gems": {
+            "description": "单次请求 Gems 上限",
+            "hint": "非负数，默认 5；0 仅允许零报价。文生图和图生图均先用相同请求体查询 /ai/generate-image/quote，超限或报价失败不生成。每个子请求独立限制，不是整个多图任务的总预算；服务端生成时会重新计价。"
+          },
           "width": {
             "description": "默认图片宽度",
-            "hint": "宽高比不指定时使用此尺寸；范围 64–2048，必须是 64 的倍数，宽×高不能超过 3,145,728 像素。"
+            "hint": "用于聊天/LLM 标准尺寸匹配的比例与面积基准，也是 WebUI 宽度默认值；范围 64–2048，必须是 64 的倍数，宽×高不能超过 3,145,728 像素。"
           },
           "height": {
             "description": "默认图片高度",
-            "hint": "宽高比不指定时使用此尺寸；范围 64–2048，必须是 64 的倍数，宽×高不能超过 3,145,728 像素。"
+            "hint": "用于聊天/LLM 标准尺寸匹配的比例与面积基准，也是 WebUI 高度默认值；范围 64–2048，必须是 64 的倍数，宽×高不能超过 3,145,728 像素。"
           },
           "steps": {
             "description": "采样步数",

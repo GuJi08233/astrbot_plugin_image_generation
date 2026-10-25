@@ -89,6 +89,7 @@ class GenerationRequest:
         repr=False,
         compare=False,
     )
+    image_size: tuple[int, int] | None = None  # Explicit manual pixel dimensions.
 
 
 @dataclass

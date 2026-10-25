@@ -7,22 +7,22 @@ from astrbot.api import logger
 from astrbot.api.event import MessageChain
 from astrbot.api.star import Context
 
-from ..config.manager import ConfigManager
-from ..shared.constants import UNSPECIFIED_OPTION
 from ..adapters.generator import ImageGenerator
-from .image_processor import ImageProcessor
-from ..shared.logging import log_prefix, safe_log_error_body, safe_log_text
-from .reference_collector import ensure_image_data
+from ..audit.safety import SafetyAuditor
+from ..config.manager import ConfigManager
 from ..formatting.result import (
     build_result_info_message,
     format_generation_failure_message,
 )
-from ..audit.safety import SafetyAuditor
+from ..shared.constants import UNSPECIFIED_OPTION
+from ..shared.logging import log_prefix, safe_log_error_body, safe_log_text
+from ..shared.types import GenerationRequest, ImageCapability, ImageData
 from ..tasks.ids import new_task_id
 from ..tasks.manager import TaskManager
-from ..shared.types import GenerationRequest, ImageCapability, ImageData
 from ..tasks.usage import UsageManager
+from .image_processor import ImageProcessor
 from .image_utils import validate_aspect_ratio, validate_resolution
+from .reference_collector import ensure_image_data
 
 LOG = log_prefix("GenerationExecutor")
 
@@ -85,6 +85,7 @@ class GenerationExecutor:
         is_usage_limit_admin: bool = False,
         deliver_via_ai: bool = False,
         auto_send: bool = True,
+        image_size: tuple[int, int] | None = None,
     ) -> None:
         """Generate images and optionally send them to the user.
 
@@ -99,6 +100,7 @@ class GenerationExecutor:
             is_usage_limit_admin: Whether usage limits are bypassed for display.
             deliver_via_ai: Whether results are handed back to the AI tool flow.
             auto_send: Whether to send generated images to the user directly.
+            image_size: Optional manually selected NovelAI pixel dimensions.
         """
         if not self.generator or not self.generator.adapter:
             if task_id:
@@ -178,6 +180,7 @@ class GenerationExecutor:
                 is_usage_limit_admin,
                 deliver_via_ai,
                 auto_send,
+                image_size,
             )
         except (asyncio.CancelledError, Exception):
             self.release_generation_task_quota_once(task_id)
@@ -239,6 +242,7 @@ class GenerationExecutor:
         is_usage_limit_admin: bool,
         deliver_via_ai: bool = False,
         auto_send: bool = True,
+        image_size: tuple[int, int] | None = None,
     ) -> None:
         """Execute generation logic and deliver results."""
         start_time = time.time()
@@ -264,6 +268,7 @@ class GenerationExecutor:
             aspect_ratio=aspect_ratio,
             resolution=resolution,
             image_count=image_count,
+            image_size=image_size,
         )
 
         duration = time.time() - start_time
@@ -410,6 +415,7 @@ class GenerationExecutor:
         aspect_ratio: str | None,
         resolution: str | None,
         image_count: int,
+        image_size: tuple[int, int] | None = None,
     ) -> tuple[list[str], list[str]]:
         """Generate all requested images concurrently under request-level limits."""
         generated_file_paths: list[str] = []
@@ -448,6 +454,7 @@ class GenerationExecutor:
                         images=images,
                         aspect_ratio=aspect_ratio,
                         resolution=resolution,
+                        image_size=image_size,
                         task_id=task_id,
                         batch_index=current_index,
                         batch_count=image_count,

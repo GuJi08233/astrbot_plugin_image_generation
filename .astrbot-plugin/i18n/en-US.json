@@ -33,6 +33,10 @@
         "imageCount": "Image count",
         "aspectRatio": "Aspect ratio",
         "resolution": "Resolution",
+        "imageWidth": "Image width (pixels)",
+        "imageHeight": "Image height (pixels)",
+        "imageSizeHint": "Use multiples of 64 between 64 and 2048, with at most 3,145,728 pixels in total. Custom sizes may incur charges and remain subject to the provider's Gems quote limit.",
+        "invalidImageSize": "Enter width and height as multiples of 64 between 64 and 2048, with at most 3,145,728 pixels in total.",
         "presets": "Presets",
         "personas": "Personas",
         "optional": "Optional",
@@ -323,10 +327,10 @@
         },
         "novelai": {
           "name": "NovelAI native JSON API",
-          "hint": "Calls /v1/nai/generate-image with the NovelAI native request structure. Supports text to image and image to image with one reference, and returns JSON Base64 images.",
+          "hint": "Uses the NovelAI native request structure and checks the quote before generation. Chat commands and LLM tools use only four standard sizes; WebUI users can enter custom pixel dimensions, still protected by the per-request Gems limit. Supports text to image and image to image with one reference, returning JSON Base64 images.",
           "base_url": {
             "description": "API endpoint",
-            "hint": "Defaults to https://nai.rinko.ai and calls /v1/nai/generate-image. Compatible services must accept the native request body and return JSON images."
+            "hint": "Defaults to https://nai.rinko.ai. Compatible services must support /ai/generate-image/quote and /v1/nai/generate-image with native request bodies and JSON image responses."
           },
           "proxy": {
             "description": "Proxy URL",
@@ -342,7 +346,7 @@
           },
           "capability_options": {
             "description": "Model capabilities",
-            "hint": "Supports text to image, image to image with one reference, and aspect ratios. The global resolution setting has no effect; dimensions come from the width/height settings or the requested aspect ratio.",
+            "hint": "Supports text to image, image to image with one reference, and aspect ratios. Chat and LLM requests map ratios to 512×512, 832×1216, 1216×832, or 1024×1024; WebUI users can enter custom pixel dimensions. The global resolution setting has no effect. Standard sizes do not guarantee free image-to-image or high-step generation.",
             "labels": [
               "Text to image",
               "Image to image",
@@ -357,13 +361,17 @@
             "description": "Maximum attempt count override",
             "hint": "The default 1 sends a single request. Set to 0 to use Runtime Control. Only transport errors are retried, with the same idempotency key, payload, and API key. HTTP errors and invalid results are not resubmitted; check the original task on the server."
           },
+          "max_cost_gems": {
+            "description": "Gems limit per request",
+            "hint": "Nonnegative; defaults to 5. Set to 0 to allow only zero-price quotes. Text-to-image and image-to-image requests are quoted at /ai/generate-image/quote with the same payload before generation. An over-limit or failed quote stops generation. The limit applies to each sub-request, not the whole multi-image task. The server recalculates the price when generating."
+          },
           "width": {
             "description": "Default image width",
-            "hint": "Used when no aspect ratio is selected. Range: 64–2048, in multiples of 64. Width × height must not exceed 3,145,728 pixels."
+            "hint": "Provides the ratio and pixel-area baseline for standard-size matching in chat and LLM requests, and the default WebUI width. Range: 64–2048, in multiples of 64. Width × height must not exceed 3,145,728 pixels."
           },
           "height": {
             "description": "Default image height",
-            "hint": "Used when no aspect ratio is selected. Range: 64–2048, in multiples of 64. Width × height must not exceed 3,145,728 pixels."
+            "hint": "Provides the ratio and pixel-area baseline for standard-size matching in chat and LLM requests, and the default WebUI height. Range: 64–2048, in multiples of 64. Width × height must not exceed 3,145,728 pixels."
           },
           "steps": {
             "description": "Sampling steps",

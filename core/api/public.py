@@ -7,27 +7,6 @@ from typing import Any
 
 from astrbot.api import logger
 
-from .models import (
-    ImageGenerationOperationResult,
-    ImageGenerationResult,
-    ImageGenerationSubmitResult,
-    ImageGenerationTaskSnapshot,
-    PublicAPIResultCode,
-)
-from ..tasks.models import GenerationTaskCreationError, GenerationTaskRecord
-from ..shared.logging import (
-    format_log_event,
-    log_prefix,
-    mask_sensitive,
-    safe_log_error_body,
-    safe_log_text,
-)
-from ..generation.reference_collector import (
-    collect_reference_images_from_personas,
-    deduplicate_reference_images,
-    download_reference_images,
-)
-from ..tasks.ids import new_task_id
 from ..config.templates import (
     build_generation_prompt,
     extract_templates_from_prompt,
@@ -36,7 +15,28 @@ from ..config.templates import (
     normalize_name_items,
     parse_preset_prompt,
 )
-from ..shared.types import ImageCapability, ImageData
+from ..generation.reference_collector import (
+    collect_reference_images_from_personas,
+    deduplicate_reference_images,
+    download_reference_images,
+)
+from ..shared.logging import (
+    format_log_event,
+    log_prefix,
+    mask_sensitive,
+    safe_log_error_body,
+    safe_log_text,
+)
+from ..shared.types import AdapterType, ImageCapability, ImageData
+from ..tasks.ids import new_task_id
+from ..tasks.models import GenerationTaskCreationError, GenerationTaskRecord
+from .models import (
+    ImageGenerationOperationResult,
+    ImageGenerationResult,
+    ImageGenerationSubmitResult,
+    ImageGenerationTaskSnapshot,
+    PublicAPIResultCode,
+)
 
 LOG = log_prefix("PublicAPI")
 DEFAULT_SOURCE = "公共接口"
@@ -63,13 +63,19 @@ class ImageGenerationPublicAPI:
         image_count: int | None = None,
         aspect_ratio: str | None = None,
         resolution: str | None = None,
+        image_size: tuple[int, int] | None = None,
         reference_image_sources: Any = None,
         reference_image_data: list[ImageData | tuple[bytes, str]] | None = None,
         presets: str | list[str] | None = None,
         personas: str | list[str] | None = None,
         is_admin: bool = False,
     ) -> ImageGenerationSubmitResult:
-        """Submit a background image generation task and return its task id."""
+        """Submit a background image generation task and return its task id.
+
+        Args:
+            image_size: Explicit manual NovelAI pixel dimensions. Omit this to
+                restrict automatic dimensions to the four standard sizes.
+        """
         plugin = self._plugin
         if not plugin.generator or not plugin.generator.adapter:
             return self._submit_error(
@@ -82,6 +88,31 @@ class ImageGenerationPublicAPI:
                 PublicAPIResultCode.API_KEY_MISSING,
                 "未配置 API Key，无法生成图片",
             )
+
+        if image_size is not None:
+            adapter_config = plugin.config_manager.adapter_config
+            if not adapter_config or adapter_config.type != AdapterType.NOVELAI:
+                return self._submit_error(
+                    PublicAPIResultCode.REJECTED,
+                    "仅 NovelAI 支持指定像素宽高",
+                )
+            if (
+                not isinstance(image_size, (tuple, list))
+                or len(image_size) != 2
+                or any(
+                    isinstance(side, bool)
+                    or not isinstance(side, int)
+                    or not 64 <= side <= 2048
+                    or side % 64
+                    for side in image_size
+                )
+                or image_size[0] * image_size[1] > 3_145_728
+            ):
+                return self._submit_error(
+                    PublicAPIResultCode.REJECTED,
+                    "宽高必须为 64–2048 内的 64 倍数整数，总像素不能超过 3,145,728",
+                )
+            image_size = tuple(image_size)
 
         request_source = str(source or DEFAULT_SOURCE).strip() or DEFAULT_SOURCE
         scope = str(unified_msg_origin or "").strip()
@@ -216,6 +247,7 @@ class ImageGenerationPublicAPI:
                 presets=matched_presets,
                 personas=matched_personas,
                 auto_send=False,
+                image_size=image_size,
             )
             task_created = True
             logger.debug(
@@ -401,6 +433,7 @@ class ImageGenerationPublicAPI:
         image_count: int | None = None,
         aspect_ratio: str | None = None,
         resolution: str | None = None,
+        image_size: tuple[int, int] | None = None,
         reference_image_sources: Any = None,
         reference_image_data: list[ImageData | tuple[bytes, str]] | None = None,
         presets: str | list[str] | None = None,
@@ -417,6 +450,7 @@ class ImageGenerationPublicAPI:
             image_count=image_count,
             aspect_ratio=aspect_ratio,
             resolution=resolution,
+            image_size=image_size,
             reference_image_sources=reference_image_sources,
             reference_image_data=reference_image_data,
             presets=presets,

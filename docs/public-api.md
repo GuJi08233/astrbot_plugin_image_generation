@@ -56,6 +56,7 @@ async def submit_generation_task(
     image_count: int | None = None,
     aspect_ratio: str | None = None,
     resolution: str | None = None,
+    image_size: tuple[int, int] | None = None,
     reference_image_sources: Any = None,
     reference_image_data: list[ImageData | tuple[bytes, str]] | None = None,
     presets: str | list[str] | None = None,
@@ -74,6 +75,7 @@ async def submit_generation_task(
 | `image_count` | 生成数量；不传使用插件默认值，超过插件配置上限会被截断。 |
 | `aspect_ratio` | 宽高比；不传使用插件默认值，如 `"1:1"`、`"16:9"`、`"不指定"`。 |
 | `resolution` | 分辨率；不传使用插件默认值，如 `"1K"`、`"2K"`、`"4K"`、`"不指定"`。 |
+| `image_size` | 可选手动尺寸 `(width, height)`，仅用于 NovelAI；覆盖宽高比（包括预设比例）和供应商默认宽高。每边必须为 `64–2048` 的整数且是 `64` 的倍数，总面积不超过 `3,145,728` 像素。不传或传 `None` 时，NovelAI 从四种标准尺寸匹配，其他适配器保留原行为。其他适配器显式传此参数会返回 `rejected`。该参数不向聊天指令或 LLM 工具暴露。 |
 | `reference_image_sources` | 参考图来源。支持字符串、列表、嵌套列表、包含 `url`/`path`/`file`/`name` 的字典；可为 HTTP(S) URL、本地路径、`file://` URL 或插件数据目录下 `files/...` 路径。本地路径仅允许当前会话 workspace、AstrBot temp 目录和本插件数据目录，并会校验真实图片类型。 |
 | `reference_image_data` | 已读取的参考图二进制列表，推荐传入 `ImageData`；仍兼容旧格式 `(image_bytes, mime_type)`。 |
 | `presets` | 一个或多个预设名。字符串可用空格分隔多个名称。 |
@@ -85,6 +87,9 @@ async def submit_generation_task(
 - 最终提示词按 `presets` → `personas` → `prompt` 顺序拼接。
 - 插件默认不扫描 `prompt` 正文中的模板名称；开启“提示词正文匹配”后才会按勾选项补匹配。
 - 预设可以覆盖 `aspect_ratio` 和 `resolution`。
+- NovelAI 未传 `image_size` 时，只从 `512×512`、`832×1216`、`1216×832`、`1024×1024` 选择最接近请求比例的尺寸；未指定比例时使用供应商默认宽高的比例，同一比例再按供应商默认面积选择。默认供应商尺寸下，`3:4`、`4:3`、`1:1` 分别匹配 `832×1216`、`1216×832`、`1024×1024`。
+- NovelAI 显式 `image_size` 可使用标准列表外的合法尺寸，优先于预设比例；文生图、图生图和手动尺寸都要通过供应商 `max_cost_gems` 报价检查，超限或报价失败不生成。标准尺寸不保证高步数或图生图免费，报价限制按子请求独立生效。
+- 其他适配器显式传 `image_size` 时，在审核与预约用量之前返回 `rejected`，不会创建生图任务。
 - 参考图会自动下载、读取、大小检查和去重。
 - 当前适配器不支持图生图时，所有参考图会被忽略。
 - 创建的任务不会主动发送结果，结果路径写入任务快照的 `result_paths`。
@@ -103,7 +108,7 @@ async def submit_generation_task(
 | `queue_full` | `False` | 生图任务队列已满。 |
 | `task_manager_closed` | `False` | 任务管理器正在关闭或暂不可用。 |
 | `task_id_conflict` | `False` | 自动生成的任务 ID 冲突。 |
-| `rejected` | `False` | 任务因其他创建错误被拒绝。 |
+| `rejected` | `False` | 手动尺寸不受当前适配器支持，或任务因其他创建错误被拒绝。 |
 
 ### 示例
 
@@ -243,6 +248,7 @@ async def generate_image_files(
     image_count: int | None = None,
     aspect_ratio: str | None = None,
     resolution: str | None = None,
+    image_size: tuple[int, int] | None = None,
     reference_image_sources: Any = None,
     reference_image_data: list[ImageData | tuple[bytes, str]] | None = None,
     presets: str | list[str] | None = None,
@@ -278,7 +284,7 @@ async def generate_image_files(
 | `queue_full` | `submit_generation_task`、`generate_image_files` | `False` | 生图任务队列已满，任务没有创建。 |
 | `task_manager_closed` | `submit_generation_task`、`generate_image_files` | `False` | 任务管理器正在关闭或暂不可用，任务没有创建。 |
 | `task_id_conflict` | `submit_generation_task`、`generate_image_files` | `False` | 自动生成的任务 ID 冲突，任务没有创建。 |
-| `rejected` | `submit_generation_task`、`generate_image_files` | `False` | 任务因其他创建错误被拒绝。 |
+| `rejected` | `submit_generation_task`、`generate_image_files` | `False` | 手动尺寸不受当前适配器支持，或任务因其他创建错误被拒绝。 |
 | `cancel_requested` | `cancel_generation_task` | `True` | 已请求取消任务，或任务已处于取消状态。 |
 | `cancel_failed` | `cancel_generation_task` | `False` | 任务不存在、任务已结束或会话作用域不匹配。 |
 | `not_found` | `wait_generation_result`、`generate_image_files` | `False` | 任务不存在或已被清理。 |
@@ -314,6 +320,19 @@ result = await api.generate_image_files(
     is_admin=event.is_admin(),
     source="astrbot_plugin_example",
     timeout_seconds=180,
+)
+```
+
+### 示例：NovelAI 手动指定尺寸
+
+仅在当前生图供应商为 NovelAI 时使用；指定尺寸仍受单次请求 Gems 报价上限保护。
+
+```python
+result = await api.generate_image_files(
+    prompt="一幅森林插画",
+    image_size=(896, 1152),
+    source="astrbot_plugin_example",
+    timeout_seconds=330,
 )
 ```
 

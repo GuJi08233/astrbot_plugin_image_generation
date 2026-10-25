@@ -14,6 +14,9 @@ from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.star.star_tools import StarTools
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 
+from .core.adapters.generator import ImageGenerator
+from .core.api.public import ImageGenerationPublicAPI
+from .core.audit.safety import SafetyAuditor
 from .core.config.manager import (
     LLM_TOOL_IMAGE_GENERATION,
     LLM_TOOL_PRESET_EDIT,
@@ -21,30 +24,13 @@ from .core.config.manager import (
     LLM_TOOL_TASK_MANAGEMENT,
     ConfigManager,
 )
-from .core.generation.executor import GenerationExecutor
-from .core.tasks.models import (
-    GenerationTaskCreationError,
-    GenerationTaskRecord,
-    GenerationTaskStatus,
+from .core.config.templates import (
+    build_generation_prompt,
+    extract_templates_from_prompt,
+    find_named_entry,
+    format_template_summary,
+    parse_preset_prompt,
 )
-from .core.adapters.generator import ImageGenerator
-from .core.generation.image_processor import ImageProcessor
-from .core.llm.result_handler import LLMResultHandler
-from .core.llm.tools import (
-    ImageGenerationTool,
-    ImageTaskTool,
-    PresetEditTool,
-    PresetQueryTool,
-    adjust_tool_parameters,
-)
-from .core.shared.logging import (
-    log_prefix,
-    mask_sensitive,
-    safe_log_error_body,
-    safe_log_text,
-)
-from .core.api.public import ImageGenerationPublicAPI
-from .core.generation.reference_collector import collect_command_reference_images
 from .core.formatting.result import (
     format_image_command_help as render_image_command_help,
 )
@@ -57,18 +43,32 @@ from .core.formatting.result import (
 from .core.formatting.result import (
     format_task_list as render_task_list,
 )
-from .core.audit.safety import SafetyAuditor
+from .core.generation.executor import GenerationExecutor
+from .core.generation.image_processor import ImageProcessor
+from .core.generation.reference_collector import collect_command_reference_images
+from .core.llm.result_handler import LLMResultHandler
+from .core.llm.tools import (
+    ImageGenerationTool,
+    ImageTaskTool,
+    PresetEditTool,
+    PresetQueryTool,
+    adjust_tool_parameters,
+)
 from .core.page import ImageGenerationPageAPI
+from .core.shared.logging import (
+    log_prefix,
+    mask_sensitive,
+    safe_log_error_body,
+    safe_log_text,
+)
+from .core.shared.types import AdapterType, ImageCapability, ImageData
 from .core.tasks.ids import new_task_id
 from .core.tasks.manager import TaskManager
-from .core.config.templates import (
-    build_generation_prompt,
-    extract_templates_from_prompt,
-    find_named_entry,
-    format_template_summary,
-    parse_preset_prompt,
+from .core.tasks.models import (
+    GenerationTaskCreationError,
+    GenerationTaskRecord,
+    GenerationTaskStatus,
 )
-from .core.shared.types import ImageCapability, ImageData
 from .core.tasks.usage import UsageManager
 
 LOG = log_prefix("Plugin")
@@ -264,6 +264,18 @@ class ImageGenerationPlugin(Star):
         capabilities = self.generator.adapter.get_capabilities()
         adjust_tool_parameters(tool, capabilities)
         props = tool.parameters.get("properties", {})
+        adapter_config = self.config_manager.adapter_config
+        if (
+            adapter_config
+            and adapter_config.type == AdapterType.NOVELAI
+            and "aspect_ratio" in props
+        ):
+            props["aspect_ratio"]["description"] = (
+                "可选的目标宽高比。NovelAI 仅使用 512×512、832×1216、"
+                "1216×832、1024×1024 四种标准尺寸，按最接近比例匹配；"
+                "3:4 使用 832×1216，4:3 使用 1216×832。"
+                "不指定时按供应商默认宽高匹配；仅尺寸符合标准不保证其他参数免费。"
+            )
         if not self.config_manager.personas:
             props.pop("persona", None)
             return
@@ -335,6 +347,7 @@ class ImageGenerationPlugin(Star):
         personas: list[str] | None = None,
         source_event: AstrMessageEvent | None = None,
         auto_send: bool = True,
+        image_size: tuple[int, int] | None = None,
     ) -> GenerationTaskRecord:
         """Create and track an image generation task in the unified task manager."""
         if preset is None:
@@ -356,6 +369,7 @@ class ImageGenerationPlugin(Star):
                 is_usage_limit_admin=is_usage_limit_admin,
                 deliver_via_ai=source == "LLM工具",
                 auto_send=auto_send,
+                image_size=image_size,
             )
 
         try:

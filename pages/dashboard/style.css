@@ -533,6 +533,10 @@ textarea:disabled {
   gap: 8px;
 }
 
+.field[hidden] {
+  display: none;
+}
+
 .field.full-span {
   grid-column: 1 / -1;
 }

@@ -24,7 +24,14 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
         root = Path(__file__).resolve().parents[1]
         namespace = "_novelai_test_plugin"
         modules = {}
-        for suffix in ("", "adapter", "core", "core.adapters", "core.shared"):
+        for suffix in (
+            "",
+            "adapter",
+            "core",
+            "core.adapters",
+            "core.generation",
+            "core.shared",
+        ):
             name = f"{namespace}.{suffix}" if suffix else namespace
             module = types.ModuleType(name)
             module.__path__ = [str(root.joinpath(*suffix.split(".")))]
@@ -37,8 +44,12 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
                 f"{namespace}.adapter.novelai_adapter"
             )
             shared = importlib.import_module(f"{namespace}.core.shared.types")
+            generator_module = importlib.import_module(
+                f"{namespace}.core.adapters.generator"
+            )
 
         self.GenerationRequest = shared.GenerationRequest
+        self.ImageGenerator = generator_module.ImageGenerator
         self.ImageData = shared.ImageData
         self.ImageCapability = shared.ImageCapability
         self.adapter = adapter_module.NovelAIAdapter(
@@ -69,8 +80,22 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
             return_value=json.dumps(self.response_data).encode()
         )
         self.response.text = AsyncMock(return_value=json.dumps(self.response_data))
+        self.quote_response = MagicMock()
+        self.quote_response.status = 200
+        self.quote_response.headers = {"Content-Type": "application/json"}
+        self.quote_response.json = AsyncMock(return_value={"total_gems": 0})
+        self.quote_response.read = AsyncMock(return_value=b'{"total_gems": 0}')
+        self.quote_response.text = AsyncMock(return_value='{"total_gems": 0}')
+        self.generation_post = MagicMock()
+        self.generation_post.return_value.__aenter__.return_value = self.response
+        self.quote_post = MagicMock()
+        self.quote_post.return_value.__aenter__.return_value = self.quote_response
         self.session = MagicMock()
-        self.session.post.return_value.__aenter__.return_value = self.response
+        self.session.post.side_effect = lambda url, **kwargs: (
+            self.quote_post(url, **kwargs)
+            if url.endswith("/ai/generate-image/quote")
+            else self.generation_post(url, **kwargs)
+        )
         patches = ExitStack()
         self.addCleanup(patches.close)
         patches.enter_context(
@@ -84,29 +109,31 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-    def _set_response(self, data, *, status=200):
+    def _set_response(self, data, *, status=200, quote=False):
         """Set every supported fake JSON body access path consistently.
 
         Args:
             data: JSON response body supplied by the fake provider.
             status: HTTP response status code.
+            quote: Whether to update the quotation response instead of generation.
         """
-        self.response.status = status
-        self.response.json.return_value = data
-        self.response.read.return_value = json.dumps(data).encode()
-        self.response.text.return_value = json.dumps(data)
+        response = self.quote_response if quote else self.response
+        response.status = status
+        response.json.return_value = data
+        response.read.return_value = json.dumps(data).encode()
+        response.text.return_value = json.dumps(data)
 
     async def test_text_to_image_uses_native_json_and_decodes_valid_image(self):
         result = await self.adapter.generate(self.GenerationRequest(prompt="1girl"))
 
         self.assertIsNone(result.error)
         self.assertEqual(result.images, [self.image_bytes])
-        self.session.post.assert_called_once()
+        self.generation_post.assert_called_once()
         self.assertEqual(
-            self.session.post.call_args.args,
+            self.generation_post.call_args.args,
             ("https://images.example.invalid/v1/nai/generate-image",),
         )
-        payload = self.session.post.call_args.kwargs["json"]
+        payload = self.generation_post.call_args.kwargs["json"]
         self.assertEqual(payload["input"], "1girl")
         self.assertEqual(payload["model"], "nai-diffusion-4-5-full")
         self.assertEqual(payload["action"], "generate")
@@ -124,7 +151,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(parameters["seed"], int)
         self.assertGreaterEqual(parameters["seed"], 0)
         self.assertLessEqual(parameters["seed"], 4294967295)
-        headers = self.session.post.call_args.kwargs["headers"]
+        headers = self.generation_post.call_args.kwargs["headers"]
         self.assertEqual(headers["Authorization"], "Bearer first-test-key")
         self.assertEqual(headers["Content-Type"], "application/json")
         self.assertTrue(headers["Idempotency-Key"])
@@ -141,7 +168,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
         result = await self.adapter.generate(request)
 
         self.assertIsNone(result.error)
-        payload = self.session.post.call_args.kwargs["json"]
+        payload = self.generation_post.call_args.kwargs["json"]
         self.assertEqual(payload["action"], "img2img")
         parameters = payload["parameters"]
         self.assertNotIn("data:", parameters["image"])
@@ -266,7 +293,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.error)
         self.session.post.assert_not_called()
 
-    def test_numeric_boundaries_remain_valid(self):
+    def test_manual_dimensions_and_numeric_boundaries_remain_valid(self):
         for options in (
             {"width": 64, "height": 64, "steps": 1, "scale": 0, "seed": 0},
             {
@@ -282,36 +309,169 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
                 self.adapter.config.extra = options
 
                 payload = self.adapter._build_payload(
-                    self.GenerationRequest(prompt="1girl")
+                    self.GenerationRequest(
+                        prompt="1girl",
+                        image_size=(options["width"], options["height"]),
+                    )
                 )
 
                 for name, value in options.items():
                     self.assertEqual(payload["parameters"][name], value)
 
-    def test_aspect_ratio_preserves_area_with_valid_novelai_dimensions(self):
-        default_area = 832 * 1216
-        for ratio, expected_ratio in (("1:1", 1), ("16:9", 16 / 9), ("9:16", 9 / 16)):
+    def test_automatic_aspect_ratios_only_use_standard_dimensions(self):
+        expected_sizes = {
+            None: (832, 1216),
+            "不指定": (832, 1216),
+            "1:1": (1024, 1024),
+            "2:3": (832, 1216),
+            "3:2": (1216, 832),
+            "3:4": (832, 1216),
+            "4:3": (1216, 832),
+            "4:5": (832, 1216),
+            "5:4": (1216, 832),
+            "9:16": (832, 1216),
+            "16:9": (1216, 832),
+            "21:9": (1216, 832),
+        }
+        allowed_sizes = {(512, 512), (832, 1216), (1216, 832), (1024, 1024)}
+        for ratio, expected_size in expected_sizes.items():
             with self.subTest(ratio=ratio):
                 payload = self.adapter._build_payload(
                     self.GenerationRequest(prompt="1girl", aspect_ratio=ratio)
                 )
 
                 parameters = payload["parameters"]
-                width, height = parameters["width"], parameters["height"]
-                self.assertEqual(width % 64, 0)
-                self.assertEqual(height % 64, 0)
-                self.assertGreaterEqual(width, 64)
-                self.assertGreaterEqual(height, 64)
-                self.assertLessEqual(width, 2048)
-                self.assertLessEqual(height, 2048)
-                self.assertLessEqual(width * height, 3145728)
-                self.assertLess(abs(width * height / default_area - 1), 0.1)
-                self.assertLess(abs(width / height / expected_ratio - 1), 0.1)
+                size = (parameters["width"], parameters["height"])
+                self.assertIn(size, allowed_sizes)
+                self.assertEqual(size, expected_size)
+
+    def test_provider_dimensions_map_to_standard_sizes(self):
+        for configured, expected in (
+            ((512, 512), (512, 512)),
+            ((896, 1152), (832, 1216)),
+            ((1152, 896), (1216, 832)),
+            ((768, 768), (512, 512)),
+            ((960, 960), (1024, 1024)),
+        ):
+            with self.subTest(configured=configured):
+                self.adapter.config.extra.update(
+                    {"width": configured[0], "height": configured[1]}
+                )
+
+                parameters = self.adapter._build_payload(
+                    self.GenerationRequest(prompt="1girl")
+                )["parameters"]
+
+                self.assertEqual((parameters["width"], parameters["height"]), expected)
+
+    def test_square_dimensions_follow_configured_pixel_area(self):
+        for configured, expected in (
+            ((512, 512), (512, 512)),
+            ((1024, 1024), (1024, 1024)),
+            ((832, 1216), (1024, 1024)),
+        ):
+            with self.subTest(configured=configured):
+                self.adapter.config.extra.update(
+                    {"width": configured[0], "height": configured[1]}
+                )
+
+                parameters = self.adapter._build_payload(
+                    self.GenerationRequest(prompt="1girl", aspect_ratio="1:1")
+                )["parameters"]
+
+                self.assertEqual((parameters["width"], parameters["height"]), expected)
+
+    async def test_manual_dimensions_override_aspect_ratio_and_provider_defaults(self):
+        self.adapter.config.extra.update({"width": 833, "height": 999})
+
+        result = await self.adapter.generate(
+            self.GenerationRequest(
+                prompt="1girl", aspect_ratio="16:9", image_size=(896, 1152)
+            )
+        )
+
+        self.assertIsNone(result.error)
+        quote_payload = self.quote_post.call_args.kwargs["json"]
+        generation_payload = self.generation_post.call_args.kwargs["json"]
+        self.assertEqual(quote_payload, generation_payload)
+        parameters = generation_payload["parameters"]
+        self.assertEqual((parameters["width"], parameters["height"]), (896, 1152))
+
+    async def test_all_standard_manual_sizes_match_quoted_and_generated_dimensions(
+        self,
+    ):
+        for size in ((512, 512), (832, 1216), (1216, 832), (1024, 1024)):
+            with self.subTest(size=size):
+                self.quote_post.reset_mock()
+                self.generation_post.reset_mock()
+
+                result = await self.adapter.generate(
+                    self.GenerationRequest(
+                        prompt="1girl", aspect_ratio="16:9", image_size=size
+                    )
+                )
+
+                self.assertIsNone(result.error)
+                self.quote_post.assert_called_once()
+                self.generation_post.assert_called_once()
+                quote_payload = self.quote_post.call_args.kwargs["json"]
+                generation_payload = self.generation_post.call_args.kwargs["json"]
+                self.assertEqual(quote_payload, generation_payload)
+                parameters = generation_payload["parameters"]
+                self.assertEqual((parameters["width"], parameters["height"]), size)
+
+    async def test_orchestrator_preserves_manual_dimensions_for_quote_and_generation(
+        self,
+    ):
+        generator = self.ImageGenerator.__new__(self.ImageGenerator)
+        generator.adapter = self.adapter
+
+        result = await generator.generate_preconverted(
+            self.GenerationRequest(
+                prompt="1girl", aspect_ratio="16:9", image_size=(896, 1152)
+            ),
+            images=[],
+        )
+
+        self.assertIsNone(result.error)
+        quote_payload = self.quote_post.call_args.kwargs["json"]
+        generation_payload = self.generation_post.call_args.kwargs["json"]
+        self.assertEqual(quote_payload, generation_payload)
+        parameters = generation_payload["parameters"]
+        self.assertEqual((parameters["width"], parameters["height"]), (896, 1152))
+
+    async def test_invalid_manual_dimensions_are_rejected_before_http(self):
+        for size in (
+            (),
+            (512,),
+            (512, 512, 512),
+            "512x512",
+            (True, 512),
+            (512, False),
+            (512.0, 512),
+            (512, "512"),
+            (0, 512),
+            (63, 512),
+            (833, 1216),
+            (512, 1217),
+            (2112, 512),
+            (2048, 2048),
+        ):
+            with self.subTest(size=size):
+                self.session.post.reset_mock()
+
+                result = await self.adapter.generate(
+                    self.GenerationRequest(prompt="1girl", image_size=size)
+                )
+
+                self.assertIsNone(result.images)
+                self.assertTrue(result.error)
+                self.session.post.assert_not_called()
 
     async def test_invalid_aspect_ratio_is_rejected_before_http(self):
         requests = [
             self.GenerationRequest(prompt="1girl", aspect_ratio=value)
-            for value in ("0:1", "1:0", "-1:1", "invalid", "10000:1")
+            for value in ("0:1", "1:0", "-1:1", "invalid", "inf:1", "nan:1")
         ]
         for request in requests:
             with self.subTest(request=request):
@@ -331,7 +491,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIsNone(result.error)
-        parameters = self.session.post.call_args.kwargs["json"]["parameters"]
+        parameters = self.generation_post.call_args.kwargs["json"]["parameters"]
         self.assertEqual(parameters["width"], 1024)
         self.assertEqual(parameters["height"], 1024)
 
@@ -396,7 +556,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
         for body in invalid_images:
             with self.subTest(body_type=type(body).__name__, body=body):
                 self._set_response(body)
-                self.session.post.reset_mock()
+                self.generation_post.reset_mock()
 
                 result = await self.adapter.generate(
                     self.GenerationRequest(prompt="1girl")
@@ -404,7 +564,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
 
                 self.assertIsNone(result.images)
                 self.assertTrue(result.error)
-                self.session.post.assert_called_once()
+                self.generation_post.assert_called_once()
 
     async def test_failed_json_responses_do_not_return_images_or_retry(self):
         for body in (
@@ -413,7 +573,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(body=body):
                 self._set_response(body)
-                self.session.post.reset_mock()
+                self.generation_post.reset_mock()
 
                 result = await self.adapter.generate(
                     self.GenerationRequest(prompt="1girl")
@@ -421,7 +581,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
 
                 self.assertIsNone(result.images)
                 self.assertTrue(result.error)
-                self.session.post.assert_called_once()
+                self.generation_post.assert_called_once()
 
     async def test_completed_job_status_variants_return_valid_image(self):
         jobs = (
@@ -439,7 +599,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
                 if job is not None:
                     body["job"] = job
                 self._set_response(body)
-                self.session.post.reset_mock()
+                self.generation_post.reset_mock()
 
                 result = await self.adapter.generate(
                     self.GenerationRequest(prompt="1girl")
@@ -447,7 +607,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
 
                 self.assertIsNone(result.error)
                 self.assertEqual(result.images, [self.image_bytes])
-                self.session.post.assert_called_once()
+                self.generation_post.assert_called_once()
 
     async def test_noncompleted_or_invalid_job_status_fails_without_retry(self):
         statuses = (
@@ -472,7 +632,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
                 self._set_response(
                     {"job": {"status": status}, "images": [self.image_base64]}
                 )
-                self.session.post.reset_mock()
+                self.generation_post.reset_mock()
 
                 result = await self.adapter.generate(
                     self.GenerationRequest(prompt="1girl")
@@ -480,7 +640,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
 
                 self.assertIsNone(result.images)
                 self.assertTrue(result.error)
-                self.session.post.assert_called_once()
+                self.generation_post.assert_called_once()
 
     async def test_charged_job_still_requires_no_error_and_valid_image(self):
         bodies = (
@@ -491,7 +651,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
         for body in bodies:
             with self.subTest(body=body):
                 self._set_response({**body, "job": {"status": "charged"}})
-                self.session.post.reset_mock()
+                self.generation_post.reset_mock()
 
                 result = await self.adapter.generate(
                     self.GenerationRequest(prompt="1girl")
@@ -499,7 +659,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
 
                 self.assertIsNone(result.images)
                 self.assertTrue(result.error)
-                self.session.post.assert_called_once()
+                self.generation_post.assert_called_once()
 
     async def test_invalid_json_is_not_retried_after_http_success(self):
         self.response.json.side_effect = json.JSONDecodeError("Invalid", "x", 0)
@@ -510,7 +670,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result.images)
         self.assertTrue(result.error)
-        self.session.post.assert_called_once()
+        self.generation_post.assert_called_once()
 
     async def test_valid_crc_with_corrupt_png_pixels_does_not_succeed_or_retry(self):
         corrupted_png = bytearray(self.image_bytes)
@@ -536,7 +696,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result.images)
         self.assertTrue(result.error)
-        self.session.post.assert_called_once()
+        self.generation_post.assert_called_once()
 
     async def test_local_decoder_failure_does_not_resubmit_completed_generation(self):
         with patch.object(
@@ -546,7 +706,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result.images)
         self.assertTrue(result.error)
-        self.session.post.assert_called_once()
+        self.generation_post.assert_called_once()
 
     async def test_http_errors_are_not_automatically_resubmitted(self):
         for status in (400, 401, 409, 429, 500, 503):
@@ -554,7 +714,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
                 self._set_response(
                     {"error": {"message": "request rejected"}}, status=status
                 )
-                self.session.post.reset_mock()
+                self.generation_post.reset_mock()
 
                 result = await self.adapter.generate(
                     self.GenerationRequest(prompt="1girl")
@@ -562,7 +722,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
 
                 self.assertIsNone(result.images)
                 self.assertIn(str(status), result.error)
-                self.session.post.assert_called_once()
+                self.generation_post.assert_called_once()
 
     async def test_interrupted_http_error_body_does_not_trigger_network_retry(self):
         for status in (400, 503):
@@ -573,7 +733,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
                 with self.subTest(status=status, exception=type(exception).__name__):
                     self.response.status = status
                     self.response.read.side_effect = exception
-                    self.session.post.reset_mock()
+                    self.generation_post.reset_mock()
 
                     result = await self.adapter.generate(
                         self.GenerationRequest(prompt="1girl")
@@ -581,11 +741,11 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
 
                     self.assertIsNone(result.images)
                     self.assertIn(str(status), result.error)
-                    self.session.post.assert_called_once()
+                    self.generation_post.assert_called_once()
 
     async def test_network_retry_keeps_seed_api_key_and_idempotency_key(self):
-        successful_context = self.session.post.return_value
-        self.session.post.side_effect = [
+        successful_context = self.generation_post.return_value
+        self.generation_post.side_effect = [
             aiohttp.ClientConnectionError("connection interrupted"),
             successful_context,
         ]
@@ -595,8 +755,8 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result.error)
         self.assertEqual(result.images, [self.image_bytes])
-        self.assertEqual(self.session.post.call_count, 2)
-        first, second = self.session.post.call_args_list
+        self.assertEqual(self.generation_post.call_count, 2)
+        first, second = self.generation_post.call_args_list
         self.assertEqual(first.kwargs["json"], second.kwargs["json"])
         self.assertEqual(first.kwargs["headers"], second.kwargs["headers"])
         self.assertEqual(
@@ -614,7 +774,7 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(first_result.error)
         self.assertIsNone(second_result.error)
-        first, second = self.session.post.call_args_list
+        first, second = self.generation_post.call_args_list
         self.assertNotEqual(
             first.kwargs["headers"]["Idempotency-Key"],
             second.kwargs["headers"]["Idempotency-Key"],
@@ -622,24 +782,24 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_network_retries_stop_at_configured_attempt_count(self):
         self.adapter.max_retry_attempts = 2
-        self.session.post.side_effect = asyncio.TimeoutError
+        self.generation_post.side_effect = asyncio.TimeoutError
 
         result = await self.adapter.generate(self.GenerationRequest(prompt="1girl"))
 
         self.assertIsNone(result.images)
         self.assertTrue(result.error)
-        self.assertEqual(self.session.post.call_count, 2)
-        first, second = self.session.post.call_args_list
+        self.assertEqual(self.generation_post.call_count, 2)
+        first, second = self.generation_post.call_args_list
         self.assertEqual(first.kwargs["json"], second.kwargs["json"])
         self.assertEqual(first.kwargs["headers"], second.kwargs["headers"])
 
     async def test_http_cancellation_propagates_without_retry(self):
-        self.session.post.side_effect = asyncio.CancelledError
+        self.generation_post.side_effect = asyncio.CancelledError
 
         with self.assertRaises(asyncio.CancelledError):
             await self.adapter.generate(self.GenerationRequest(prompt="1girl"))
 
-        self.session.post.assert_called_once()
+        self.generation_post.assert_called_once()
 
     async def test_response_read_cancellation_propagates_without_retry(self):
         self.response.read.side_effect = asyncio.CancelledError
@@ -649,7 +809,244 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await self.adapter.generate(self.GenerationRequest(prompt="1girl"))
 
-        self.session.post.assert_called_once()
+        self.generation_post.assert_called_once()
+
+    async def test_expensive_manual_portrait_is_rejected_before_generation(self):
+        self.adapter.config.extra["max_cost_gems"] = 5
+        self._set_response({"total_gems": 80, "balance_gems": 120}, quote=True)
+
+        result = await self.adapter.generate(
+            self.GenerationRequest(
+                prompt="1girl, cat ears", aspect_ratio="3:4", image_size=(896, 1152)
+            )
+        )
+
+        self.assertIsNone(result.images)
+        self.assertIn("80", result.error)
+        self.assertIn("5", result.error)
+        self.quote_post.assert_called_once()
+        self.generation_post.assert_not_called()
+        parameters = self.quote_post.call_args.kwargs["json"]["parameters"]
+        self.assertEqual((parameters["width"], parameters["height"]), (896, 1152))
+        self.assertEqual(parameters["steps"], 28)
+        self.assertEqual(parameters["n_samples"], 1)
+
+    async def test_paid_quotes_at_or_below_configured_limit_are_allowed(self):
+        for limit in (2, 3, 5, 2.5):
+            for quote in (0, limit / 2, limit):
+                with self.subTest(limit=limit, quote=quote):
+                    self.adapter.config.extra["max_cost_gems"] = limit
+                    self._set_response({"total_gems": quote}, quote=True)
+                    self.quote_post.reset_mock()
+                    self.generation_post.reset_mock()
+
+                    result = await self.adapter.generate(
+                        self.GenerationRequest(prompt="1girl")
+                    )
+
+                    self.assertIsNone(result.error)
+                    self.assertEqual(result.images, [self.image_bytes])
+                    self.quote_post.assert_called_once()
+                    self.generation_post.assert_called_once()
+
+    async def test_zero_limit_only_allows_zero_cost_quotes(self):
+        self.adapter.config.extra["max_cost_gems"] = 0
+        for quote in (0, 0.01):
+            with self.subTest(quote=quote):
+                self._set_response({"total_gems": quote}, quote=True)
+                self.generation_post.reset_mock()
+
+                result = await self.adapter.generate(
+                    self.GenerationRequest(prompt="1girl")
+                )
+
+                if quote == 0:
+                    self.assertIsNone(result.error)
+                    self.generation_post.assert_called_once()
+                else:
+                    self.assertTrue(result.error)
+                    self.generation_post.assert_not_called()
+
+    async def test_missing_limit_defaults_to_five_gems(self):
+        self.assertNotIn("max_cost_gems", self.adapter.config.extra)
+        self._set_response({"total_gems": 5.01}, quote=True)
+
+        result = await self.adapter.generate(self.GenerationRequest(prompt="1girl"))
+
+        self.assertTrue(result.error)
+        self.generation_post.assert_not_called()
+
+    async def test_fractional_quote_above_limit_is_not_rounded_down(self):
+        self.adapter.config.extra["max_cost_gems"] = 2
+        self.quote_response.read.return_value = b'{"total_gems":2.0000000000000001}'
+
+        result = await self.adapter.generate(self.GenerationRequest(prompt="1girl"))
+
+        self.assertIsNone(result.images)
+        self.assertIn("2.0000000000000001", result.error)
+        self.quote_post.assert_called_once()
+        self.generation_post.assert_not_called()
+
+    async def test_invalid_cost_limits_are_rejected_without_http(self):
+        for limit in (-1, True, False, None, "", "invalid", float("nan"), float("inf")):
+            with self.subTest(limit=limit):
+                self.adapter.config.extra["max_cost_gems"] = limit
+                self.session.post.reset_mock()
+
+                result = await self.adapter.generate(
+                    self.GenerationRequest(prompt="1girl")
+                )
+
+                self.assertTrue(result.error)
+                self.session.post.assert_not_called()
+
+    async def test_invalid_quote_costs_never_fall_back_to_generation(self):
+        invalid_bodies = (
+            {},
+            [],
+            None,
+            {"total_gems": None},
+            {"total_gems": True},
+            {"total_gems": False},
+            {"total_gems": "0"},
+            {"total_gems": -1},
+            {"total_gems": float("nan")},
+            {"total_gems": float("inf")},
+            {"total_gems": []},
+            {"total_gems": 0, "error": {"message": "quotation failed"}},
+        )
+        for body in invalid_bodies:
+            with self.subTest(body=body):
+                self._set_response(body, quote=True)
+                self.quote_post.reset_mock()
+                self.generation_post.reset_mock()
+
+                result = await self.adapter.generate(
+                    self.GenerationRequest(prompt="1girl")
+                )
+
+                self.assertIsNone(result.images)
+                self.assertTrue(result.error)
+                self.quote_post.assert_called_once()
+                self.generation_post.assert_not_called()
+
+    async def test_invalid_quote_json_does_not_generate(self):
+        self.quote_response.read.return_value = b"not json"
+        self.quote_response.json.side_effect = json.JSONDecodeError("Invalid", "x", 0)
+
+        result = await self.adapter.generate(self.GenerationRequest(prompt="1girl"))
+
+        self.assertTrue(result.error)
+        self.quote_post.assert_called_once()
+        self.generation_post.assert_not_called()
+
+    async def test_quote_http_errors_do_not_generate_or_rotate_credentials(self):
+        for status in (401, 404, 500):
+            with self.subTest(status=status):
+                self._set_response({"error": "quote failed"}, status=status, quote=True)
+                self.quote_post.reset_mock()
+                self.generation_post.reset_mock()
+                with patch.object(self.adapter, "_rotate_api_key") as rotate:
+                    result = await self.adapter.generate(
+                        self.GenerationRequest(prompt="1girl")
+                    )
+
+                self.assertTrue(result.error)
+                self.quote_post.assert_called_once()
+                self.generation_post.assert_not_called()
+                rotate.assert_not_called()
+
+    async def test_quote_transport_errors_do_not_generate(self):
+        for exception in (
+            aiohttp.ClientConnectionError("offline"),
+            asyncio.TimeoutError(),
+        ):
+            with self.subTest(exception=type(exception).__name__):
+                self.quote_post.reset_mock()
+                self.quote_post.side_effect = exception
+
+                result = await self.adapter.generate(
+                    self.GenerationRequest(prompt="1girl")
+                )
+
+                self.assertTrue(result.error)
+                self.quote_post.assert_called_once()
+                self.generation_post.assert_not_called()
+
+    async def test_quote_read_errors_do_not_generate(self):
+        self.quote_response.read.side_effect = aiohttp.ClientPayloadError("truncated")
+
+        result = await self.adapter.generate(self.GenerationRequest(prompt="1girl"))
+
+        self.assertTrue(result.error)
+        self.quote_post.assert_called_once()
+        self.generation_post.assert_not_called()
+
+    async def test_quote_and_generation_share_payload_seed_and_api_key(self):
+        result = await self.adapter.generate(
+            self.GenerationRequest(prompt="1girl", aspect_ratio="4:3")
+        )
+
+        self.assertIsNone(result.error)
+        self.assertEqual(self.session.post.call_count, 2)
+        quote, generation = self.session.post.call_args_list
+        self.assertTrue(quote.args[0].endswith("/ai/generate-image/quote"))
+        self.assertTrue(generation.args[0].endswith("/v1/nai/generate-image"))
+        self.assertEqual(quote.kwargs["json"], generation.kwargs["json"])
+        self.assertEqual(
+            quote.kwargs["headers"]["Authorization"],
+            generation.kwargs["headers"]["Authorization"],
+        )
+        self.assertEqual(
+            quote.kwargs["headers"]["Authorization"], "Bearer first-test-key"
+        )
+        self.assertNotIn("Idempotency-Key", quote.kwargs["headers"])
+        self.assertTrue(generation.kwargs["headers"]["Idempotency-Key"])
+        self.assertGreaterEqual(quote.kwargs["json"]["parameters"]["seed"], 0)
+
+    async def test_image_editing_uses_same_cost_limit(self):
+        self.adapter.config.extra["max_cost_gems"] = 3
+        self._set_response({"total_gems": 4}, quote=True)
+
+        result = await self.adapter.generate(
+            self.GenerationRequest(
+                prompt="change hair color",
+                images=[self.ImageData(data=self.image_bytes, mime_type="image/png")],
+            )
+        )
+
+        self.assertTrue(result.error)
+        self.generation_post.assert_not_called()
+        payload = self.quote_post.call_args.kwargs["json"]
+        self.assertEqual(payload["action"], "img2img")
+        self.assertTrue(payload["parameters"]["image"])
+
+    async def test_quote_url_preserves_service_prefix_for_supported_base_urls(self):
+        for prefix in ("", "/proxy"):
+            root = "https://images.example.invalid" + prefix
+            expected_quote_url = root + "/ai/generate-image/quote"
+            for suffix in ("", "/", "/v1", "/v1/", "/v1/nai/generate-image"):
+                with self.subTest(prefix=prefix, suffix=suffix):
+                    self.adapter.base_url = root + suffix
+                    self.quote_post.reset_mock()
+
+                    result = await self.adapter.generate(
+                        self.GenerationRequest(prompt="1girl")
+                    )
+
+                    self.assertIsNone(result.error)
+                    self.assertEqual(
+                        self.quote_post.call_args.args, (expected_quote_url,)
+                    )
+
+    async def test_quote_cancellation_propagates_without_generation(self):
+        self.quote_response.read.side_effect = asyncio.CancelledError
+
+        with self.assertRaises(asyncio.CancelledError):
+            await self.adapter.generate(self.GenerationRequest(prompt="1girl"))
+
+        self.quote_post.assert_called_once()
+        self.generation_post.assert_not_called()
 
 
 if __name__ == "__main__":

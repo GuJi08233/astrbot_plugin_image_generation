@@ -87,6 +87,7 @@ class ImageGenerator:
             images=images,
             aspect_ratio=request.aspect_ratio,
             resolution=request.resolution,
+            image_size=request.image_size,
             task_id=request.task_id,
             batch_index=request.batch_index,
             batch_count=request.batch_count,

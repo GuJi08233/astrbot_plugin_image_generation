@@ -9,6 +9,7 @@ import json
 import math
 import secrets
 import time
+from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from typing import Any
 from urllib.parse import urlsplit
@@ -32,6 +33,8 @@ class NovelAIAdapter(BaseImageAdapter):
     DEFAULT_BASE_URL = "https://nai.rinko.ai"
     DEFAULT_MODEL = "nai-diffusion-4-5-full"
     ENDPOINT = "/v1/nai/generate-image"
+    QUOTE_ENDPOINT = "/ai/generate-image/quote"
+    STANDARD_SIZES = ((512, 512), (832, 1216), (1216, 832), (1024, 1024))
 
     def get_capabilities(self) -> ImageCapability:
         """Return supported capabilities selected in the provider configuration.
@@ -46,24 +49,46 @@ class NovelAIAdapter(BaseImageAdapter):
         )
 
     async def generate(self, request: GenerationRequest) -> GenerationResult:
-        """Generate images while keeping credentials and payload stable on retry.
+        """Check the quoted cost before generating with stable retry parameters.
 
         Args:
             request: Prompt, optional source image, and task metadata.
 
         Returns:
-            A validated image or a safe error message. Only transport failures
-            can retry; the service does not replay previous generation results.
+            A validated image or a safe error message. Quotes above the configured
+            limit or unavailable quotes never proceed to generation. Only
+            generation transport failures can retry with the original parameters.
         """
         if not self.api_keys:
             return GenerationResult(error="未配置 API Key")
         try:
-            self._endpoint_url()
+            generation_url = self._endpoint_url()
+            raw_limit = self.config.extra.get("max_cost_gems", 5)
+            max_cost_gems = Decimal(str(raw_limit))
+            if (
+                isinstance(raw_limit, bool)
+                or not max_cost_gems.is_finite()
+                or max_cost_gems < 0
+            ):
+                raise ValueError("max_cost_gems must be a finite number >= 0")
             payload = await asyncio.to_thread(self._build_payload, request)
+        except InvalidOperation:
+            return GenerationResult(
+                error="NovelAI 参数错误: max_cost_gems must be a finite number >= 0"
+            )
         except (TypeError, ValueError, OverflowError) as exc:
             return GenerationResult(error=f"NovelAI 参数错误: {exc}")
 
         api_key = self._get_current_api_key()
+        quote_error = await self._check_cost_limit(
+            request,
+            url=generation_url.removesuffix(self.ENDPOINT) + self.QUOTE_ENDPOINT,
+            payload=payload,
+            api_key=api_key,
+            max_cost_gems=max_cost_gems,
+        )
+        if quote_error:
+            return GenerationResult(error=quote_error)
         idempotency_key = uuid4().hex
         error = "NovelAI 请求失败"
         for attempt in range(self.max_retry_attempts):
@@ -83,6 +108,69 @@ class NovelAIAdapter(BaseImageAdapter):
             if attempt + 1 < self.max_retry_attempts:
                 await asyncio.sleep(min(2**attempt, 10))
         return GenerationResult(error=error)
+
+    async def _check_cost_limit(
+        self,
+        request: GenerationRequest,
+        *,
+        url: str,
+        payload: dict[str, Any],
+        api_key: str,
+        max_cost_gems: Decimal,
+    ) -> str | None:
+        """Require a valid YesNAI quote within the provider's per-request limit.
+
+        Args:
+            request: Original image generation request for diagnostic context.
+            url: Non-billing quote endpoint on the configured service.
+            payload: Exact generation body, including the resolved random seed.
+            api_key: Credential snapshot also used for generation and retries.
+            max_cost_gems: Maximum quoted Gems allowed for this sub-request.
+
+        Returns:
+            An error that prevents generation, or None when the quote is allowed.
+        """
+        started = time.monotonic()
+        try:
+            async with self._get_session().post(
+                url,
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+                proxy=self.proxy,
+                timeout=self._get_timeout(),
+            ) as response:
+                if response.status != 200:
+                    return (
+                        f"NovelAI 报价失败 (HTTP {response.status})，未提交生成；"
+                        "请检查服务地址、令牌和报价接口"
+                    )
+                data = json.loads(await response.read(), parse_float=Decimal)
+            if not isinstance(data, dict) or data.get("error"):
+                return "NovelAI 报价响应无效，无法确认费用，未提交生成"
+            total = data.get("total_gems")
+            if isinstance(total, bool) or not isinstance(total, (int, Decimal)):
+                return "NovelAI 报价缺少有效的 total_gems，未提交生成"
+            quoted_cost = Decimal(total)
+            if not quoted_cost.is_finite() or quoted_cost < 0:
+                return "NovelAI 报价 total_gems 必须是有限非负数值，未提交生成"
+            if quoted_cost > max_cost_gems:
+                parameters = payload["parameters"]
+                return (
+                    f"NovelAI 报价 {quoted_cost} Gems 超过单次请求上限 "
+                    f"{max_cost_gems} Gems，未提交生成"
+                    f"（{parameters['width']}×{parameters['height']}，"
+                    f"{parameters['steps']} 步）"
+                )
+            return None
+        except (ValueError, UnicodeDecodeError, InvalidOperation):
+            return "NovelAI 报价响应无效，无法确认费用，未提交生成"
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            self._log_request_exception(request, time.monotonic() - started, exc)
+            return "NovelAI 报价请求失败，无法确认费用，未提交生成"
 
     async def _generate_once(
         self,
@@ -184,7 +272,8 @@ class NovelAIAdapter(BaseImageAdapter):
             request: Prompt, source image, and optional target aspect ratio.
 
         Returns:
-            Native parameters with a fixed seed and PNG source image when editing.
+            Native parameters with standard dimensions unless a manual pixel size
+            is supplied, a fixed seed, and a PNG source image when editing.
 
         Raises:
             ValueError: A parameter or source image is unsupported or invalid.
@@ -194,6 +283,15 @@ class NovelAIAdapter(BaseImageAdapter):
         model = (self.model or self.DEFAULT_MODEL).strip()
         if request.images and model.startswith("nai-diffusion-5"):
             raise ValueError("NAI Diffusion 5 currently supports text-to-image only")
+        if request.image_size is not None and (
+            not isinstance(request.image_size, (tuple, list))
+            or len(request.image_size) != 2
+            or any(
+                isinstance(side, bool) or not isinstance(side, int)
+                for side in request.image_size
+            )
+        ):
+            raise ValueError("Manual image size must contain two integer dimensions")
 
         parameters: dict[str, Any] = {}
         integer_fields = (
@@ -203,7 +301,10 @@ class NovelAIAdapter(BaseImageAdapter):
             ("seed", -1, -1, 2**32 - 1),
         )
         for key, default, minimum, maximum in integer_fields:
-            raw = self.config.extra.get(key, default)
+            if request.image_size is not None and key in {"width", "height"}:
+                raw = request.image_size[0 if key == "width" else 1]
+            else:
+                raw = self.config.extra.get(key, default)
             value = float(raw)
             if (
                 isinstance(raw, bool)
@@ -231,22 +332,26 @@ class NovelAIAdapter(BaseImageAdapter):
         width, height = parameters["width"], parameters["height"]
         if width % 64 or height % 64 or width * height > 3_145_728:
             raise ValueError("Dimensions must be multiples of 64 with area <= 3145728")
-        ratio = request.aspect_ratio
-        if ratio and ratio != UNSPECIFIED_OPTION:
-            horizontal, vertical = (float(part) for part in ratio.split(":"))
-            if not all(
-                math.isfinite(part) and part > 0 for part in (horizontal, vertical)
-            ):
-                raise ValueError("Aspect ratio must contain two positive numbers")
+        if request.image_size is None:
+            ratio = request.aspect_ratio
+            target_ratio = width / height
+            if ratio and ratio != UNSPECIFIED_OPTION:
+                horizontal, vertical = (float(part) for part in ratio.split(":"))
+                if not all(
+                    math.isfinite(part) and part > 0 for part in (horizontal, vertical)
+                ):
+                    raise ValueError("Aspect ratio must contain two positive numbers")
+                target_ratio = horizontal / vertical
             area = width * height
-            width = round(math.sqrt(area * horizontal / vertical) / 64) * 64
-            height = round(math.sqrt(area * vertical / horizontal) / 64) * 64
-            if not (64 <= width <= 2048 and 64 <= height <= 2048):
-                raise ValueError("Aspect ratio produces dimensions outside 64..2048")
-            if width * height > 3_145_728:
-                raise ValueError(
-                    "Aspect ratio produces an image larger than 3145728 pixels"
-                )
+            # Match relative shape first; choose the nearest configured area for
+            # the two square options. Automatic requests never invent a size.
+            width, height = min(
+                self.STANDARD_SIZES,
+                key=lambda size: (
+                    abs(math.log((size[0] / size[1]) / target_ratio)),
+                    abs(size[0] * size[1] - area),
+                ),
+            )
         parameters.update(
             width=width,
             height=height,

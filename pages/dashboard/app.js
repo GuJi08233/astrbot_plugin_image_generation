@@ -49,6 +49,10 @@ const FALLBACK = {
   'form.imageCount': '生成数量',
   'form.aspectRatio': '宽高比',
   'form.resolution': '分辨率',
+  'form.imageWidth': '图片宽度（像素）',
+  'form.imageHeight': '图片高度（像素）',
+  'form.imageSizeHint': '宽高须为 64–2048 内的 64 倍数，总面积不超过 3,145,728 像素。自定义尺寸可能收费，仍受供应商 Gems 报价上限限制。',
+  'form.invalidImageSize': '请填写 64–2048 内的 64 倍数宽高，且总面积不超过 3,145,728 像素。',
   'form.presets': '预设',
   'form.personas': '人设',
   'form.optional': '可选',
@@ -170,6 +174,7 @@ const appState = {
   bridge: null,
   strings: { ...FALLBACK },
   pluginState: null,
+  generationSizeModel: '',
   tasks: [],
   tasksTotal: 0,
   tasksOffset: 0,
@@ -872,6 +877,34 @@ async function loadStats(showMessage = false) {
   }
 }
 
+function renderGenerationSizeFields() {
+  const state = appState.pluginState || {};
+  const model = $('#modelSelect')?.value || state.current_model || '';
+  const settings = state.model_settings?.[model] || {};
+  const isNovelAI = settings.adapter_type === 'novelai';
+  const modelChanged = appState.generationSizeModel !== model;
+  for (const id of ['aspectRatioField', 'resolutionField']) {
+    if ($(`#${id}`)) $(`#${id}`).hidden = isNovelAI;
+  }
+  for (const id of ['aspectRatioSelect', 'resolutionSelect']) {
+    if ($(`#${id}`)) $(`#${id}`).disabled = isNovelAI;
+  }
+  for (const id of ['imageWidthField', 'imageHeightField', 'imageSizeHint']) {
+    if ($(`#${id}`)) $(`#${id}`).hidden = !isNovelAI;
+  }
+  for (const [id, value] of [
+    ['imageWidthInput', settings.width ?? 832],
+    ['imageHeightInput', settings.height ?? 1216],
+  ]) {
+    const input = $(`#${id}`);
+    if (!input) continue;
+    input.disabled = !isNovelAI;
+    input.required = isNovelAI;
+    if (isNovelAI && modelChanged) input.value = value;
+  }
+  appState.generationSizeModel = model;
+}
+
 function renderState() {
   const state = appState.pluginState || {};
   if ($('#headerModelPill')) {
@@ -881,9 +914,11 @@ function renderState() {
   const currentPresets = getCheckedValues('presetList');
   const currentPersonas = getCheckedValues('personaList');
   const models = [...new Set([state.current_model, ...(state.available_models || [])].filter(Boolean))];
-  renderSelect($('#modelSelect'), models, state.current_model, t('form.noModels'));
+  const selectedModel = $('#modelSelect')?.value;
+  renderSelect($('#modelSelect'), models, models.includes(selectedModel) ? selectedModel : state.current_model, t('form.noModels'));
   renderSelect($('#aspectRatioSelect'), ASPECT_RATIOS, state.default_aspect_ratio || '不指定', t('form.unspecified'));
   renderSelect($('#resolutionSelect'), RESOLUTIONS, state.default_resolution || '不指定', t('form.unspecified'));
+  renderGenerationSizeFields();
   if ($('#imageCountInput')) {
     $('#imageCountInput').value = state.default_image_count || 1;
     $('#imageCountInput').max = state.max_image_count || 1;
@@ -1642,7 +1677,7 @@ async function submitTask(event) {
     button.textContent = t('submitting');
   }
   try {
-    const result = await apiPost('page/generate', {
+    const payload = {
       prompt: $('#promptInput')?.value?.trim() || '',
       model: $('#modelSelect')?.value || '',
       image_count: $('#imageCountInput')?.value || 1,
@@ -1651,7 +1686,23 @@ async function submitTask(event) {
       presets: getCheckedValues('presetList'),
       personas: getCheckedValues('personaList'),
       reference_tokens: appState.uploads.map((item) => item.token),
-    });
+    };
+    const modelSettings = appState.pluginState?.model_settings?.[payload.model] || {};
+    if (modelSettings.adapter_type === 'novelai') {
+      const width = Number($('#imageWidthInput')?.value);
+      const height = Number($('#imageHeightInput')?.value);
+      if (
+        ![width, height].every((value) => Number.isInteger(value) && value >= 64 && value <= 2048 && value % 64 === 0)
+        || width * height > 3145728
+      ) {
+        throw new Error(t('form.invalidImageSize'));
+      }
+      payload.width = width;
+      payload.height = height;
+      delete payload.aspect_ratio;
+      delete payload.resolution;
+    }
+    const result = await apiPost('page/generate', payload);
     const taskId = result.task_id || '';
     appState.selectedTaskId = taskId || appState.selectedTaskId;
     const submittedTask = result.task || (taskId ? { task_id: taskId, active: true } : null);
@@ -2008,6 +2059,7 @@ function openTask(taskId) {
 
 function bindEvents() {
   $('#generationForm')?.addEventListener('submit', submitTask);
+  $('#modelSelect')?.addEventListener('change', () => renderGenerationSizeFields());
   $('#refreshStateBtn')?.addEventListener('click', () => loadState(true));
   $('#refreshTasksBtn')?.addEventListener('click', () => loadTasks());
   $('#refreshGalleryBtn')?.addEventListener('click', () => loadGallery(true));
