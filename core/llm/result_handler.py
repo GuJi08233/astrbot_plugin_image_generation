@@ -422,16 +422,22 @@ class LLMResultHandler:
                 )
 
         delivery_tool = DeliverySendMessageToUserTool()
+        # 用插件自己的工具集作为载体，让 build_main_agent 把全量工具合并到这个对象上；
+        # 若这里留空，core 会直接把它的工具集对象赋给 req.func_tool。
         req.func_tool = ToolSet()
         req.func_tool.add_tool(delivery_tool)
 
+        # 与普通轮一致地继承用户配置：Computer Use 运行时与主动型 Agent 的定时工具。
         config = MainAgentBuildConfig(
             tool_call_timeout=tool_call_timeout,
             llm_safety_mode=False,
             streaming_response=False,
             provider_settings=provider_settings,
-            computer_use_runtime="none",
-            add_cron_tools=False,
+            computer_use_runtime=provider_settings.get("computer_use_runtime", "none"),
+            sandbox_cfg=provider_settings.get("sandbox", {}),
+            add_cron_tools=provider_settings.get("proactive_capability", {}).get(
+                "add_cron_tools", True
+            ),
         )
         result = await build_main_agent(
             event=cron_event,
@@ -445,17 +451,18 @@ class LLMResultHandler:
             await self._send_fallback(record, reason="无法构建主 Agent")
             return
 
-        # build_main_agent merges default tools from persona/plugin settings.
-        # Trim tools before reset so this proactive turn can only deliver results.
-        result.provider_request.func_tool = ToolSet()
+        # 唤醒轮保留完整工具集，只把 send_message_to_user 换回带投递记账的变体：
+        # build_main_agent 合并的 persona/插件工具集里有核心的同名工具，会把变体覆盖掉，
+        # 换掉后插件才能确认结果是否真的送达。必须在 await reset_coro 之前完成，
+        # 因为 reset 持有的是同一个 request 对象。
         result.provider_request.func_tool.add_tool(delivery_tool)
         if result.reset_coro:
             await result.reset_coro
 
         runner = result.agent_runner
         async for _resp in runner.step_until_done(30):
-            # 是否发送由 AI 决定，本轮不代它发送任何内容：结果投递只经由
-            # send_message_to_user 工具完成，这里只负责把本轮跑完。
+            # 是否发送、发送什么由 AI 决定，本轮不代它发送任何内容：这里只负责把
+            # 这一轮完整跑完，投递记录由 send_message_to_user 变体自己写入。
             pass
 
         llm_resp = runner.get_final_llm_resp()
@@ -469,8 +476,8 @@ class LLMResultHandler:
             )
         else:
             logger.debug(
-                f"{log_prefix('Task', record.task_id)} AI 本轮未向用户发送内容，"
-                "结果仅留在会话历史中"
+                f"{log_prefix('Task', record.task_id)} 本轮未通过 send_message_to_user "
+                f"投递结果（会话发送标记={cron_event._has_send_oper}）"
             )
 
         summary_note = (
@@ -494,7 +501,22 @@ class LLMResultHandler:
                 f"{json.dumps(record.delivered_paths, ensure_ascii=False)}. "
                 "These images were already sent to the user; do not send them again."
             )
-        if unsent_paths:
+            if unsent_paths:
+                summary_note += (
+                    ", unsent_paths="
+                    f"{json.dumps(unsent_paths, ensure_ascii=False)}. "
+                    "These images were generated but not sent to the user; send them "
+                    "only when the conversation calls for it."
+                )
+        elif cron_event._has_send_oper:
+            # 唤醒轮保留完整工具集，结果也可能由本插件之外的发送工具发出，
+            # 此时记账不完整，不要断言"未发送"以免后续重复发送。
+            summary_note += (
+                ", delivered_paths=unknown. A message already reached the user in this "
+                "turn, but the delivered images could not be recorded; check the "
+                "conversation before sending them again."
+            )
+        elif unsent_paths:
             summary_note += (
                 ", unsent_paths="
                 f"{json.dumps(unsent_paths, ensure_ascii=False)}. "
