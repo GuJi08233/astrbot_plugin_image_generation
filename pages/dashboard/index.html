@@ -150,6 +150,23 @@
                 ></textarea>
               </label>
 
+              <div class="field full-span" id="negativePromptField" hidden>
+                <label for="negativePromptInput" data-i18n="form.negativePrompt">反向提示词</label>
+                <label class="checkbox-field" for="useDefaultNegativePrompt">
+                  <input id="useDefaultNegativePrompt" type="checkbox" checked />
+                  <span data-i18n="form.useDefaultNegativePrompt">使用供应商默认反向提示词</span>
+                </label>
+                <textarea
+                  id="negativePromptInput"
+                  class="negative-prompt-input"
+                  rows="3"
+                  data-i18n-placeholder="form.negativePromptPlaceholder"
+                  placeholder="填写本次希望避免的内容。取消使用默认值并留空，可清空本次反向提示词。"
+                  disabled
+                ></textarea>
+                <small id="negativePromptHint" data-i18n="form.negativePromptHint">与正向提示词用于同一次生图。仅覆盖本次反向词，不修改供应商默认配置。</small>
+              </div>
+
               <label class="field" for="modelSelect">
                 <span data-i18n="form.model">模型</span>
                 <select id="modelSelect"></select>
@@ -202,12 +219,64 @@
 
               <div class="field full-span upload-card" id="uploadPanel">
                 <div>
-                  <span data-i18n="form.referenceImages">参考图</span>
+                  <span id="referenceImageLabel" data-i18n="form.referenceImages">参考图</span>
                   <small data-i18n="form.referenceHint">支持 jpg/png/webp/gif/heic/heif，按配置限制大小。</small>
                 </div>
                 <input id="referenceInput" type="file" accept="image/*" multiple />
                 <div class="upload-list" id="uploadList"></div>
               </div>
+
+              <details class="field full-span novelai-options" id="novelaiOptionsPanel" hidden>
+                <summary data-i18n="novelai.title">NovelAI 高级设置</summary>
+                <div class="novelai-options-grid">
+                  <label class="field" for="novelaiModeSelect">
+                    <span data-i18n="novelai.mode">生成模式</span>
+                    <select id="novelaiModeSelect">
+                      <option value="auto" data-i18n="novelai.modeAuto">自动（根据源图和蒙版）</option>
+                      <option value="generate" data-i18n="novelai.modeText">文生图</option>
+                      <option value="img2img" data-i18n="novelai.modeImage">图生图</option>
+                      <option value="infill" data-i18n="novelai.modeInpaint">局部重绘</option>
+                    </select>
+                  </label>
+                  <label class="field" for="novelaiParametersInput">
+                    <span data-i18n="novelai.parameters">本次采样与多角色参数（JSON）</span>
+                    <textarea id="novelaiParametersInput" rows="7" class="json-input" spellcheck="false"
+                      placeholder='{"steps":28,"scale":5,"sampler":"k_euler_ancestral","characters":[{"prompt":"1girl, red hair","negative_prompt":"hat","position":"B3"},{"prompt":"1boy, blue hair","position":"D3"}]}'></textarea>
+                    <small data-i18n="novelai.parametersHint">留空继承供应商默认值。支持 steps、sampler、scale、seed、noise_schedule、cfg_rescale、sm、sm_dyn、dynamic_thresholding、variety_boost 和 characters。角色位置为 A1–E5 或 [x,y]，最多 6 人。宽高使用上方输入框。</small>
+                  </label>
+                  <div class="field upload-card" id="novelaiMaskField">
+                    <div>
+                      <span data-i18n="novelai.mask">局部重绘蒙版</span>
+                      <small data-i18n="novelai.maskHint">白色区域重绘，黑色区域保留。上传与源图尺寸一致的蒙版；局部重绘需要一张源图。</small>
+                    </div>
+                    <input id="novelaiMaskInput" type="file" accept="image/*" />
+                    <div class="upload-list" id="novelaiMaskList"></div>
+                  </div>
+                  <div class="field upload-card">
+                    <div>
+                      <span data-i18n="novelai.characterReferences">角色精确参考</span>
+                      <small data-i18n="novelai.characterReferencesHint">为受支持的 NAI4.5 模型上传参考图，逐张设置类型、强度和保真度。不能与 Vibe 同时使用；这些图片不会作为图生图源图。</small>
+                    </div>
+                    <input id="novelaiCharacterInput" type="file" accept="image/*" multiple />
+                    <div class="novelai-reference-list" id="novelaiCharacterList"></div>
+                  </div>
+                  <label class="field" for="novelaiVibeInput">
+                    <span data-i18n="novelai.vibe">已编码 Vibe</span>
+                    <textarea id="novelaiVibeInput" rows="4" class="json-input" spellcheck="false"
+                      data-i18n-placeholder="novelai.vibePlaceholder"
+                      placeholder='粘贴已编码 Base64，或 [{"encoding":"...","information_extracted":1,"strength":0.6}]'></textarea>
+                    <small data-i18n="novelai.vibeHint">V4 系列必须提供已编码数据，最多 16 项。此处不会调用付费编码接口。V3 图片参考可在高级 JSON 的 vibe_references 中填写 image、information_extracted 和 strength。</small>
+                  </label>
+                  <label class="field" for="novelaiVibeFileInput">
+                    <span data-i18n="novelai.vibeFile">导入 Vibe（.naiv4vibe / JSON / Base64 文本）</span>
+                    <input id="novelaiVibeFileInput" type="file" accept="text/plain,application/json,.txt,.json,.naiv4vibe" />
+                  </label>
+                  <label class="field" id="novelaiVibeVariantField" for="novelaiVibeVariantSelect" hidden>
+                    <span data-i18n="novelai.vibeVariant">选择导入文件中的编码变体</span>
+                    <select id="novelaiVibeVariantSelect"></select>
+                  </label>
+                </div>
+              </details>
             </form>
 
             <section class="dashboard-card dashboard-card--padded generate-result-panel" id="generateResultPanel">

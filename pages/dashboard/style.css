@@ -558,6 +558,75 @@ textarea:disabled {
   gap: 12px;
 }
 
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkbox-field input[type="checkbox"] {
+  flex-shrink: 0;
+  width: 18px;
+  min-height: 18px;
+  height: 18px;
+  padding: 0;
+}
+
+.negative-prompt-input {
+  min-height: 90px;
+}
+
+.novelai-options {
+  display: block;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.novelai-options:not([open]) > .novelai-options-grid {
+  display: none;
+}
+
+.novelai-options > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.novelai-options-grid,
+.novelai-reference-list {
+  display: grid;
+  gap: 14px;
+}
+
+.novelai-options-grid {
+  margin-top: 16px;
+}
+
+.novelai-reference-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.novelai-reference-row > .upload-pill {
+  grid-column: 1 / -1;
+  justify-content: space-between;
+}
+
+.json-input {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  .novelai-reference-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 input,
 select,
 textarea {

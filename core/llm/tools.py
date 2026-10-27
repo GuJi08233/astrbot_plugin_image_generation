@@ -19,11 +19,21 @@ from ..config.templates import (
     extract_templates_from_prompt,
     find_named_entry,
     format_template_summary,
-    normalize_name_items as _normalize_name_items,
     parse_preset_prompt,
+)
+from ..config.templates import (
+    normalize_name_items as _normalize_name_items,
+)
+from ..generation.novelai_assets import prepare_novelai_assets
+from ..generation.novelai_options import (
+    NOVELAI_NOISE_SCHEDULES,
+    NOVELAI_SAMPLERS,
+    validate_novelai_options,
 )
 from ..generation.reference_collector import (
     collect_tool_reference_images,
+)
+from ..generation.reference_collector import (
     normalize_string_items as _normalize_string_items,
 )
 from ..shared.constants import SUPPORTED_ASPECT_RATIOS, SUPPORTED_RESOLUTIONS
@@ -192,10 +202,48 @@ async def _start_generation_task(
     presets: list[str] | None = None,
     personas: list[str] | None = None,
     image_count: int = 1,
+    negative_prompt: str | None = None,
+    novelai: dict[str, Any] | None = None,
 ) -> ToolExecResult:
-    """Validate request, collect references, and schedule image generation."""
+    """Validate request, collect references, and schedule image generation.
+
+    Args:
+        plugin: Image generation plugin instance.
+        event: Message event identifying the requesting session.
+        prompt: Final positive prompt.
+        aspect_ratio: Requested image aspect ratio.
+        resolution: Requested image resolution.
+        reference_images: Optional image references supplied by the tool.
+        avatar_references: Optional user avatar references.
+        persona_images: Optional persona reference images.
+        preset_or_persona: Summary of selected templates.
+        preset_label: Label describing the template summary.
+        presets: Names of selected presets.
+        personas: Names of selected personas.
+        image_count: Requested number of generated images.
+        negative_prompt: Per-request override; None inherits the provider
+            default, while an empty string clears it for this request.
+        novelai: Optional NovelAI sampling, character and image-role settings.
+
+    Returns:
+        The accepted task description or a validation error.
+    """
     if not plugin.generator or not plugin.generator.adapter:
         return "❌ 生图生成器未初始化"
+
+    if negative_prompt is not None:
+        if not isinstance(negative_prompt, str):
+            return "❌ 反向提示词必须为字符串"
+        if not (
+            plugin.generator.adapter.get_capabilities()
+            & ImageCapability.NEGATIVE_PROMPT
+        ):
+            return "❌ 当前生图接口不支持反向提示词输入"
+
+    if novelai is not None and not (
+        plugin.generator.adapter.get_capabilities() & ImageCapability.NOVELAI_OPTIONS
+    ):
+        return "❌ 当前生图接口不支持 NovelAI 专属参数"
 
     image_count = plugin.normalize_image_count(image_count)
     is_usage_limit_admin = plugin.is_usage_limit_admin(event)
@@ -216,8 +264,16 @@ async def _start_generation_task(
             logger.info(f"{LOG} 工具调用触发限制: {check_result} (用户: {masked_uid})")
         return check_result
 
+    audit_prompt = prompt
+    if novelai:
+        character_prompts = [
+            character["prompt"]
+            for character in novelai.get("characters", [])
+            if character.get("enabled", True)
+        ]
+        audit_prompt = "\n".join([prompt, *character_prompts])
     prompt_allowed, prompt_reason = await plugin.safety_auditor.audit_prompt(
-        prompt,
+        audit_prompt,
         event.unified_msg_origin,
     )
     if not prompt_allowed:
@@ -261,12 +317,19 @@ async def _start_generation_task(
             images_data = []
 
         reference_image_count = len(images_data)
+        novelai = await prepare_novelai_assets(
+            novelai,
+            image_processor=plugin.image_processor,
+            unified_msg_origin=event.unified_msg_origin,
+        )
 
         try:
             plugin.create_generation_task(
                 task_id=task_id,
                 source="LLM工具",
                 prompt=prompt,
+                negative_prompt=negative_prompt,
+                novelai=novelai,
                 images_data=images_data,
                 unified_msg_origin=event.unified_msg_origin,
                 aspect_ratio=aspect_ratio,
@@ -336,7 +399,234 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
             "properties": {
                 "prompt": {
                     "type": "string",
-                    "description": "生图时使用的额外提示词。设置 preset 或 persona 时可留空。开启提示词正文匹配后，正文中出现的已配置名称才会自动应用。",
+                    "description": "生图时使用的额外提示词。设置 preset、persona 或有效的 NovelAI 角色提示词时可留空。开启提示词正文匹配后，正文中出现的已配置名称才会自动应用。",
+                },
+                "negative_prompt": {
+                    "type": "string",
+                    "description": "可选。本次希望避免的内容，与 prompt 一起组成同一次生图的完整请求。供应商配置决定将正反向词分开发送，还是合入同一次请求的提示词；不传时使用供应商默认值，传入文本时覆盖默认值，传空字符串时清空本次反向提示词。",
+                },
+                "novelai": {
+                    "type": "object",
+                    "description": "可选。仅 NovelAI 接口支持的本次生图参数，覆盖供应商默认值。正向词使用外层 prompt，反向词使用外层 negative_prompt。i2i 与 inpaint 互斥；嵌套 image/mask 可填网络 URL 或当前会话允许的本地图片路径；未填源图时使用本次收集的单张参考图。Vibe 使用已编码数据，不会自动调用收费的编码工具。",
+                    "additionalProperties": False,
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["generate", "img2img", "infill"],
+                            "description": "省略时按素材自动选择；generate 强制文生图，避免消息/人设参考图自动触发图生图。高级功能取决于模型支持。",
+                        },
+                        "steps": {"type": "integer", "minimum": 1, "maximum": 50},
+                        "sampler": {
+                            "type": "string",
+                            "enum": list(NOVELAI_SAMPLERS),
+                            "description": "采样器，如 k_euler_ancestral。",
+                        },
+                        "scale": {"type": "number", "minimum": 0, "maximum": 10},
+                        "seed": {
+                            "type": "integer",
+                            "minimum": -1,
+                            "maximum": 4294967295,
+                            "description": "随机种子；-1 表示随机。",
+                        },
+                        "noise_schedule": {
+                            "type": "string",
+                            "enum": list(NOVELAI_NOISE_SCHEDULES),
+                            "description": "噪声调度，如 karras、exponential、polyexponential。",
+                        },
+                        "cfg_rescale": {"type": "number", "minimum": 0, "maximum": 1},
+                        "width": {
+                            "type": "integer",
+                            "minimum": 64,
+                            "maximum": 2048,
+                            "multipleOf": 64,
+                            "description": "手动宽度，必须与 height 同时传入，宽高乘积不超过 3145728。",
+                        },
+                        "height": {
+                            "type": "integer",
+                            "minimum": 64,
+                            "maximum": 2048,
+                            "multipleOf": 64,
+                            "description": "手动高度，必须与 width 同时传入。",
+                        },
+                        "sm": {
+                            "type": "boolean",
+                            "description": "SMEA，仅适用于支持的模型与采样器。",
+                        },
+                        "sm_dyn": {
+                            "type": "boolean",
+                            "description": "SMEA DYN，需同时启用 sm。",
+                        },
+                        "dynamic_thresholding": {
+                            "type": "boolean",
+                            "description": "动态阈值（Decrisp）。",
+                        },
+                        "variety_boost": {
+                            "type": "boolean",
+                            "description": "多样性增强（Variety+）。",
+                        },
+                        "autoSmea": {"type": "boolean"},
+                        "legacy": {"type": "boolean"},
+                        "legacy_uc": {"type": "boolean"},
+                        "legacy_v3_extend": {"type": "boolean"},
+                        "deliberate_euler_ancestral_bug": {"type": "boolean"},
+                        "prefer_brownian": {"type": "boolean"},
+                        "normalize_reference_strength_multiple": {"type": "boolean"},
+                        "skip_cfg_above_sigma": {"type": "number", "minimum": 0},
+                        "controlnet_strength": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                        },
+                        "characters": {
+                            "type": "array",
+                            "description": "V4/V4.5/V5 的独立角色正反向词和位置。省略位置时让模型自动布局。",
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "properties": {
+                                    "prompt": {"type": "string"},
+                                    "negative_prompt": {"type": "string"},
+                                    "enabled": {"type": "boolean"},
+                                    "position": {
+                                        "description": "A1 到 E5 的 5×5 网格位置，或 [x,y]，坐标范围 0–1。",
+                                        "anyOf": [
+                                            {"type": "null"},
+                                            {
+                                                "type": "string",
+                                                "pattern": "^[A-E][1-5]$",
+                                            },
+                                            {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "number",
+                                                    "minimum": 0,
+                                                    "maximum": 1,
+                                                },
+                                                "minItems": 2,
+                                                "maxItems": 2,
+                                            },
+                                        ],
+                                    },
+                                },
+                                "required": ["prompt"],
+                            },
+                        },
+                        "i2i": {
+                            "type": "object",
+                            "description": "图生图设置，不可与 inpaint 同时使用。",
+                            "additionalProperties": False,
+                            "properties": {
+                                "image": {
+                                    "type": "string",
+                                    "description": "源图 URL 或允许的本地路径；省略时使用本次单张参考图。",
+                                },
+                                "strength": {
+                                    "type": "number",
+                                    "minimum": 0,
+                                    "maximum": 1,
+                                },
+                                "noise": {"type": "number", "minimum": 0, "maximum": 1},
+                                "seed": {
+                                    "type": "integer",
+                                    "minimum": -1,
+                                    "maximum": 4294967295,
+                                },
+                            },
+                        },
+                        "inpaint": {
+                            "type": "object",
+                            "description": "局部重绘；mask 白色重绘、黑色保留，会使用相应的 inpainting 模型。不可与 i2i 或 Vibe 同时使用。",
+                            "additionalProperties": False,
+                            "properties": {
+                                "image": {
+                                    "type": "string",
+                                    "description": "源图 URL 或允许的本地路径；省略时使用本次单张参考图。",
+                                },
+                                "mask": {
+                                    "type": "string",
+                                    "description": "遮罩图 URL 或允许的本地路径，必须提供。",
+                                },
+                                "strength": {
+                                    "type": "number",
+                                    "minimum": 0,
+                                    "maximum": 1,
+                                },
+                                "seed": {
+                                    "type": "integer",
+                                    "minimum": -1,
+                                    "maximum": 4294967295,
+                                },
+                                "color_correct": {"type": "boolean"},
+                            },
+                            "required": ["mask"],
+                        },
+                        "character_references": {
+                            "type": "array",
+                            "description": "精确角色/风格参考，仅支持相应的 V4.5 模型；不可与 Vibe 同时使用。",
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "properties": {
+                                    "image": {
+                                        "type": "string",
+                                        "description": "参考图 URL 或允许的本地路径。",
+                                    },
+                                    "type": {
+                                        "type": "string",
+                                        "enum": [
+                                            "character",
+                                            "style",
+                                            "character&style",
+                                        ],
+                                    },
+                                    "fidelity": {
+                                        "type": "number",
+                                        "minimum": 0,
+                                        "maximum": 1,
+                                    },
+                                    "strength": {
+                                        "type": "number",
+                                        "minimum": 0,
+                                        "maximum": 1,
+                                    },
+                                },
+                                "required": ["image"],
+                            },
+                        },
+                        "vibe_references": {
+                            "type": "array",
+                            "description": "Vibe 氛围参考，最多 16 个；V4/V4.5 传已编码的原始 Base64 encoding；仅 V3 可直接传 image。不会自动进行 Vibe 编码；V5 不支持。",
+                            "maxItems": 16,
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "properties": {
+                                    "encoding": {
+                                        "type": "string",
+                                        "description": "已有的 Vibe 编码 Base64，不是普通图片 Base64。",
+                                    },
+                                    "image": {
+                                        "type": "string",
+                                        "description": "仅 V3 可用的参考图 URL 或允许的本地路径，与 encoding 二选一。",
+                                    },
+                                    "information_extracted": {
+                                        "type": "number",
+                                        "exclusiveMinimum": 0,
+                                        "maximum": 1,
+                                    },
+                                    "strength": {
+                                        "type": "number",
+                                        "minimum": 0,
+                                        "maximum": 1,
+                                    },
+                                },
+                                "oneOf": [
+                                    {"required": ["encoding"]},
+                                    {"required": ["image"]},
+                                ],
+                            },
+                        },
+                    },
                 },
                 "preset": {
                     "type": "string",
@@ -389,6 +679,11 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
         if not plugin:
             return "❌ 插件未正确初始化 (Plugin instance missing)"
 
+        try:
+            novelai = validate_novelai_options(kwargs.get("novelai"))
+        except (TypeError, ValueError) as exc:
+            return f"❌ NovelAI 参数错误: {safe_log_error_body(exc, 160)}"
+
         prompt = str(kwargs.get("prompt", "") or "").strip()
         raw_aspect_ratio = kwargs.get("aspect_ratio")
         aspect_ratio = raw_aspect_ratio or plugin.config_manager.default_aspect_ratio
@@ -440,7 +735,10 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
             persona_prompts=persona_prompts,
             extra_prompt=prompt,
         )
-        if not prompt:
+        if not prompt and not any(
+            character.get("enabled", True) and character["prompt"].strip()
+            for character in (novelai or {}).get("characters", [])
+        ):
             return "❌ 请提供图片生成的提示词、预设或人设"
 
         preset_or_persona, preset_label = format_template_summary(
@@ -457,6 +755,8 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
             plugin,
             event,
             prompt=prompt,
+            negative_prompt=kwargs.get("negative_prompt"),
+            novelai=novelai,
             aspect_ratio=str(aspect_ratio),
             resolution=str(resolution),
             reference_images=kwargs.get("reference_images"),
@@ -818,6 +1118,8 @@ def adjust_tool_parameters(
     unsupported_parameters = (
         (ImageCapability.ASPECT_RATIO, "aspect_ratio", "宽高比"),
         (ImageCapability.RESOLUTION, "resolution", "分辨率"),
+        (ImageCapability.NEGATIVE_PROMPT, "negative_prompt", "反向提示词"),
+        (ImageCapability.NOVELAI_OPTIONS, "novelai", "NovelAI 专属参数"),
     )
     for capability, key, label in unsupported_parameters:
         if not (capabilities & capability) and props.pop(key, None) is not None:

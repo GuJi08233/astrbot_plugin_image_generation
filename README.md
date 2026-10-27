@@ -42,7 +42,7 @@
 | `gemini`              | Gemini 原生 `generateContent`                                  |   ✅    |   ✅    |    ✅     | Gemini 原生图像生成接口。                                                                       |
 | `openai_chat`         | OpenAI 兼容 `chat/completions`                                 |   ✅    |   ✅    |    ❌     | 通用 Chat Completions 图像生成接口，可配置提示词前缀、输出模态和额外请求体。                    |
 | `openai`              | OpenAI Images API `/v1/images/generations`、`/v1/images/edits` |   ✅    |   ✅    |    ✅     | DALL-E / GPT Image 系列；图生图仅 GPT Image 系列支持。                                          |
-| `novelai`             | NovelAI 原生 JSON `/v1/nai/generate-image`                    |   ✅    |   ✅    |    ✅     | 单参考图图生图，自动组装 V4 提示词；聊天/LLM 匹配四种标准尺寸，WebUI 可手动填写宽高；不使用全局分辨率，详见 [NovelAI 接口配置](docs/novelai.md)。 |
+| `novelai`             | NovelAI 原生 JSON `/v1/nai/generate-image`                    |   ✅    |   ✅    |    ✅     | 支持多角色、单源图图生图、蒙版重绘、精确参考和 Vibe；WebUI、LLM 与公共 API 可传本次专属参数，不使用全局分辨率，详见 [NovelAI 接口配置](docs/novelai.md)。 |
 | `volcengine_ark`      | 火山方舟 Images Generations `/api/v3/images/generations`       |   ✅    |   ✅    |    ✅     | Seedream 系列；按模型能力发送水印、提示词优化、组图与联网搜索（5.0 Pro 自动跳过不支持参数）。   |
 | `gitee_ai`            | Gitee AI `/v1/images/generations`、`/v1/images/edits`          |   ✅    |   ✅    |    ✅     | Gitee AI 通用图像接口，可自动或手动选择生成/编辑接口。                                          |
 | `siliconflow_adapter` | SiliconFlow Images API `/v1/images/generations`                |   ✅    |   ✅    |    ✅     | 支持 Kolors、Qwen-Image、Qwen-Image-Edit、Z-Image，并可配置反向提示词、步数和提示词遵循强度。   |
@@ -55,7 +55,8 @@
 
 > 能力开关以“模型能力”配置为准。未勾选的能力不会在请求中使用，LLM 工具参数也会按当前适配器能力动态隐藏。
 > NovelAI 图生图最多接收一张参考图；消息、引用、头像与人设收集后的参考图超过一张时会报错。
-> NovelAI 聊天指令与 LLM 工具只选择 `512×512`、`832×1216`、`1216×832`、`1024×1024`，按请求比例及供应商默认面积匹配。WebUI 可手动填写宽高，公共 API 可传 `image_size=(width, height)`；手动尺寸仍受 Gems 报价上限保护。标准尺寸不保证图生图或高步数免费。
+> NovelAI 蒙版、精确参考和 Vibe 使用独立输入，不占用普通图生图源图槽；不支持的模型或功能组合会明确拒绝，不会静默降级。
+> NovelAI 聊天指令及未指定手动尺寸的 LLM/API 请求从 `512×512`、`832×1216`、`1216×832`、`1024×1024` 匹配。WebUI 可手动填写宽高，公共 API 可传 `image_size=(width, height)`，LLM/API 也可使用本次 `novelai.width`、`novelai.height`；手动尺寸仍受 Gems 报价上限保护。标准尺寸不保证图生图或高步数免费。
 
 ## 配置
 
@@ -193,6 +194,34 @@
 | `edit_image_presets`  | 预设编辑工具 | 创建或删除预设；默认不启用，开启后 AI 可修改预设配置，但不会编辑人设。 |
 
 LLM 生图工具支持 `preset`、`persona`、`aspect_ratio`、`resolution`、`image_count`、`avatar_references` 和 `reference_images` 参数。`avatar_references` 可填写 `self`、`sender` 或用户 ID；`reference_images` 支持网络图片 URL，本地路径仅允许当前会话 workspace、AstrBot temp 目录和本插件数据目录。
+
+使用 NovelAI 适配器时，工具额外提供可选的 `novelai` 对象，设置本次采样参数、宽高、多角色、图生图、蒙版重绘、精确参考或已编码 Vibe。其他适配器不会显示此参数。字段、素材来源及组合限制见 [NovelAI 接口配置](docs/novelai.md)。
+
+### 本次反向提示词
+
+NovelAI、硅基流动、ModelScope、OpenAI Images 和 OpenAI Chat 兼容接口支持为每次生图指定反向提示词。`prompt` 和 `negative_prompt` 组成同一次生图请求，WebUI、LLM 和公共 API 保留两者，适配器再决定实际发送格式。供应商配置中的反向提示词作为默认值，本次覆盖不会修改供应商配置，也不会影响其他任务。
+
+- WebUI「生成」页：默认勾选「使用供应商默认反向提示词」。取消勾选后填写本次反向提示词；留空表示本次不使用反向词。不支持的接口不显示该选项。
+- LLM `generate_image` 工具：在同一次调用中传入 `prompt` 和可选的 `negative_prompt` 字符串。省略或传 `null` 时继承供应商默认值，传入文本时完全覆盖默认值，传 `""` 时清空本次反向词。不支持反向输入的适配器会隐藏此工具参数，显式传入时拒绝任务。
+- 公共 API 的 `submit_generation_task(...)` 和 `generate_image_files(...)`：同样支持可选 `negative_prompt` 参数，`None` 继承、字符串覆盖、空字符串清空。
+
+例如，LLM 工具可以提交：
+
+```json
+{
+  "prompt": "一只白猫坐在窗边，温暖的阳光",
+  "negative_prompt": "模糊，水印，文字"
+}
+```
+
+聊天 `/生图` 命令继续使用供应商默认反向词。普通提示词中的「反向提示词：」等文本不会自动解析为独立参数，高级预设也不会覆盖反向词。
+
+OpenAI Images 和 OpenAI Chat 兼容供应商可设置 `negative_prompt_mode`：
+
+- `prompt`（默认）：将本次正向、反向要求整理成 `[Content to generate]` 与 `[Content to avoid]` 两段，放入同一次请求的提示词，不额外发送上游未声明的字段。适用于 GPT Image 2 / 2.5 等接口；Z-Image-Turbo 标准推理不使用独立负向通道，这里同样表达为普通提示词约束，实际效果取决于模型。
+- `parameter`：正向词保持原样，反向词通过同一次请求的独立 `negative_prompt` 字段发送。仅在上游明确支持该扩展时使用；字段被接口接受不代表所有模型都实际使用它。文生图 JSON、图生图表单和 Chat 请求均保留本次覆盖、空字符串清空的语义。
+
+两种模式都只在发送时转换，原始 `GenerationRequest.prompt` 与 `GenerationRequest.negative_prompt` 不会被改写。Chat 兼容接口原有 `extra_body_json` 行为在未使用新反向输入时保持兼容；本次显式指定反向词（包括空串），或配置了非空的默认反向词时，当前请求的提示词和参考图优先于额外请求体中的 `messages`，本次反向词优先于其中的 `negative_prompt`，避免额外配置覆盖完整请求。
 
 ## 任务体系
 

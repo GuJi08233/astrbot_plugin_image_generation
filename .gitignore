@@ -9,3 +9,11 @@ TODO.md
 tests/*
 !tests/test_novelai_adapter.py
 !tests/test_page_sizes.mjs
+!tests/test_negative_prompt_adapters.py
+!tests/test_negative_prompt_tool.py
+!tests/test_negative_prompt_pipeline.py
+!tests/test_page_negative_prompt.py
+!tests/test_novelai_features.py
+!tests/test_novelai_tool.py
+!tests/test_novelai_page.py
+!tests/test_openai_prompt_pair.py

@@ -29,6 +29,10 @@
         "title": "创建生图任务",
         "prompt": "提示词",
         "promptPlaceholder": "描述你想生成的画面，也可以只选择预设或人设。",
+        "negativePrompt": "反向提示词",
+        "useDefaultNegativePrompt": "使用供应商默认反向提示词",
+        "negativePromptPlaceholder": "填写本次希望避免的内容。取消使用默认值并留空，可清空本次反向提示词。",
+        "negativePromptHint": "与正向提示词用于同一次生图。仅覆盖本次反向词，不修改供应商默认配置。",
         "model": "模型",
         "imageCount": "生成数量",
         "aspectRatio": "宽高比",
@@ -52,7 +56,9 @@
         "resultTitle": "本次生成",
         "resultCount": "{count} 个任务",
         "openTask": "在任务页查看",
-        "clearResult": "关闭结果"
+        "clearResult": "关闭结果",
+        "negativePromptPromptHint": "本次反向词会与正向词合并为同一次请求中的语义约束，不使用独立负向通道。不会修改供应商默认值。",
+        "negativePromptParameterHint": "本次反向词将作为独立 negative_prompt 字段随同一次请求发送；需要兼容服务明确支持该扩展。不会修改供应商默认值。"
       },
       "tasks": {
         "eyebrow": "Queue",
@@ -159,6 +165,49 @@
       "lightbox": {
         "close": "关闭",
         "open": "查看大图"
+      },
+      "novelai": {
+        "title": "NovelAI 高级设置",
+        "mode": "生成模式",
+        "modeAuto": "自动（根据源图和蒙版）",
+        "modeText": "文生图",
+        "modeImage": "图生图",
+        "modeInpaint": "局部重绘",
+        "parameters": "本次采样与多角色参数（JSON）",
+        "parametersHint": "留空继承供应商默认值。支持 steps、sampler、scale、seed、noise_schedule、cfg_rescale、sm、sm_dyn、dynamic_thresholding、variety_boost 和 characters。角色位置为 A1–E5 或 [x,y]，最多 6 人。宽高使用上方输入框。",
+        "sourceImage": "图生图 / 局部重绘源图（最多 1 张）",
+        "sourceHint": "自动模式下有源图则图生图，有蒙版则局部重绘。文生图模式忽略源图；角色参考与 Vibe 在高级设置中单独填写。",
+        "mask": "局部重绘蒙版",
+        "maskHint": "白色区域重绘，黑色区域保留。上传与源图尺寸一致的蒙版；局部重绘需要一张源图。",
+        "characterReferences": "角色精确参考",
+        "characterReferencesHint": "为受支持的 NAI4.5 模型上传参考图，逐张设置类型、强度和保真度。不能与 Vibe 同时使用；这些图片不会作为图生图源图。",
+        "referenceType": "参考类型",
+        "type": {
+          "character": "角色",
+          "style": "风格",
+          "character&style": "角色与风格"
+        },
+        "strength": "强度",
+        "fidelity": "保真度",
+        "vibe": "已编码 Vibe",
+        "vibePlaceholder": "粘贴已编码 Base64，或 [{\"encoding\":\"...\",\"information_extracted\":1,\"strength\":0.6}]",
+        "vibeHint": "V4 系列必须提供已编码数据，最多 16 项。此处不会调用付费编码接口。V3 图片参考可在高级 JSON 的 vibe_references 中填写 image、information_extracted 和 strength。",
+        "vibeFile": "导入 Vibe（.naiv4vibe / JSON / Base64 文本）",
+        "invalidJson": "高级参数必须是有效的 JSON 对象，i2i 和 inpaint 也必须是对象。",
+        "parametersTooLarge": "高级参数 JSON 不能超过 65,536 字符。",
+        "modeConflict": "生成模式与图生图或局部重绘参数冲突，请检查 JSON 和蒙版。",
+        "maskRequired": "局部重绘需要上传蒙版，或在高级 JSON 的 inpaint.mask 中指定蒙版。",
+        "oneSource": "NovelAI 图生图或局部重绘最多使用一张源图，蒙版也必须单独上传一张。",
+        "vibeTooLarge": "已编码 Vibe 文本不能超过 16 MiB。",
+        "invalidVibe": "Vibe 必须是已编码 Base64、包含 encoding 的 JSON 对象或对象数组。",
+        "invalidList": "{name} 必须是最多 {maximum} 项的对象数组。",
+        "referencesTooMany": "角色精确参考最多允许 16 项（包括高级 JSON 中的参考）。",
+        "referenceVibeConflict": "角色精确参考和 Vibe 不能同时使用。",
+        "vibeVariant": "选择导入文件中的编码变体",
+        "vibeVariantRequired": "请选择一个编码变体后再生成",
+        "vibeInformation": "信息提取量",
+        "invalidVibeFile": "无法读取该 Vibe 文件：需要受支持的格式和有效的编码变体。",
+        "vibeModelMismatch": "导入文件没有当前模型的编码，或导入后更换了模型。请为当前模型重新导入。"
       }
     }
   },
@@ -191,6 +240,21 @@
               "宽高比",
               "分辨率"
             ]
+          },
+          "negative_prompt": {
+            "description": "默认反向提示词",
+            "hint": "每次可通过 WebUI 或 LLM 生图工具的 negative_prompt 覆盖；未传或 null 继承，空字符串清空本次。"
+          },
+          "negative_prompt_mode": {
+            "description": "反向提示词发送方式",
+            "hint": "prompt（默认）：合并到同一次请求的提示词，作为语义约束，适用于 GPT Image、Z-Image-Turbo 等没有独立负向通道的模型。parameter：通过独立 negative_prompt 字段透传，仅用于明确支持该扩展的兼容服务。",
+            "labels": [
+              "合并到提示词（默认）",
+              "独立字段透传"
+            ]
+          },
+          "extra_body_json": {
+            "hint": "可选。填写 JSON 对象，会合并到 Chat Completions 请求体顶层。使用本次反向词（含空字符串）或非空默认反向词时，本次成组输入优先于其中的 messages 和 negative_prompt。"
           }
         },
         "openai": {
@@ -220,6 +284,18 @@
               "png",
               "jpeg",
               "webp"
+            ]
+          },
+          "negative_prompt": {
+            "description": "默认反向提示词",
+            "hint": "每次可通过 WebUI 或 LLM 生图工具的 negative_prompt 覆盖；未传或 null 继承，空字符串清空本次。"
+          },
+          "negative_prompt_mode": {
+            "description": "反向提示词发送方式",
+            "hint": "prompt（默认）：合并到同一次请求的提示词，作为语义约束，适用于 GPT Image、Z-Image-Turbo 等没有独立负向通道的模型。parameter：通过独立 negative_prompt 字段透传，仅用于明确支持该扩展的兼容服务。",
+            "labels": [
+              "合并到提示词（默认）",
+              "独立字段透传"
             ]
           }
         },
@@ -397,7 +473,10 @@
         "codex_responses": {
           "hint": "调用 Codex / OpenAI Responses 图像接口，默认请求 SSE，可关闭流式请求；按实际响应类型处理最终图片，兼容 JSON/图片响应。接口路径默认为 /codex/responses，也可填写 /v1/responses。远端兼容性需实测。",
           "capability_options": {
-            "labels": ["文生图", "图生图"]
+            "labels": [
+              "文生图",
+              "图生图"
+            ]
           },
           "endpoint": {
             "description": "接口路径",
@@ -410,7 +489,12 @@
         },
         "modelscope": {
           "capability_options": {
-            "labels": ["文生图", "图生图", "宽高比", "分辨率"]
+            "labels": [
+              "文生图",
+              "图生图",
+              "宽高比",
+              "分辨率"
+            ]
           }
         },
         "custom_http": {

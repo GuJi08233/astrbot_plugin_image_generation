@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import math
 import mimetypes
 from collections import Counter
@@ -21,12 +22,20 @@ from astrbot.api.web import (
     request,
 )
 
+from ..generation.novelai_options import validate_novelai_options
 from ..shared.logging import log_prefix, safe_log_text
 from ..shared.types import AdapterType, ImageCapability
 from ..tasks.models import GenerationTaskRecord
 
 PLUGIN_NAME = "astrbot_plugin_image_generation"
 PAGE_PREVIEW_MAX_BYTES = 12 * 1024 * 1024
+NEGATIVE_PROMPT_ADAPTER_TYPES = {
+    AdapterType.OPENAI,
+    AdapterType.OPENAI_CHAT,
+    AdapterType.NOVELAI,
+    AdapterType.SILICONFLOW,
+    AdapterType.MODELSCOPE,
+}
 LOG = log_prefix("Page")
 PAGE_IMAGE_EXTENSIONS = {
     "image/jpeg": ".jpg",
@@ -583,14 +592,42 @@ class ImageGenerationPageAPI:
             for model in provider.available_models:
                 model_name = f"{provider_name}/{model}" if provider_name else model
                 available_models.append(model_name)
-                model_settings[model_name] = {"adapter_type": provider.type.value}
+                model_settings[model_name] = {
+                    "adapter_type": provider.type.value,
+                    "model": model,
+                    "supports_image_to_image": bool(
+                        provider.capability_options.get("image_to_image", False)
+                    ),
+                    "supports_negative_prompt": provider.type
+                    in NEGATIVE_PROMPT_ADAPTER_TYPES,
+                    "negative_prompt_mode": (
+                        provider.extra.get("negative_prompt_mode", "prompt")
+                        if provider.type
+                        in {AdapterType.OPENAI, AdapterType.OPENAI_CHAT}
+                        else "parameter"
+                    ),
+                }
                 if provider.type == AdapterType.NOVELAI:
                     model_settings[model_name].update(
                         width=provider.extra.get("width", 832),
                         height=provider.extra.get("height", 1216),
                     )
         if adapter_config and current_model not in model_settings:
-            model_settings[current_model] = {"adapter_type": adapter_config.type.value}
+            model_settings[current_model] = {
+                "adapter_type": adapter_config.type.value,
+                "model": adapter_config.model,
+                "supports_image_to_image": bool(
+                    adapter_config.capability_options.get("image_to_image", False)
+                ),
+                "supports_negative_prompt": adapter_config.type
+                in NEGATIVE_PROMPT_ADAPTER_TYPES,
+                "negative_prompt_mode": (
+                    adapter_config.extra.get("negative_prompt_mode", "prompt")
+                    if adapter_config.type
+                    in {AdapterType.OPENAI, AdapterType.OPENAI_CHAT}
+                    else "parameter"
+                ),
+            }
             if adapter_config.type == AdapterType.NOVELAI:
                 model_settings[current_model].update(
                     width=adapter_config.extra.get("width", 832),
@@ -1322,6 +1359,81 @@ class ImageGenerationPageAPI:
             }
         )
 
+    def _parse_novelai_page_options(self, payload: dict[str, Any]) -> dict | None:
+        """Resolve the page's typed NovelAI options and role-specific upload tokens.
+
+        Args:
+            payload: JSON generation request from the page.
+
+        Returns:
+            NovelAI options with safe local image paths, or no overrides.
+
+        Raises:
+            ValueError: Options, asset metadata, or an upload token is invalid.
+        """
+        options = payload.get("novelai")
+        if options is not None and not isinstance(options, dict):
+            raise ValueError("NovelAI 高级参数必须是 JSON 对象或 null")
+        serialized = json.dumps(options or {}, ensure_ascii=False, allow_nan=False)
+        if len(serialized.encode("utf-8")) > 24 * 1024 * 1024:
+            raise ValueError("NovelAI 高级参数总大小不能超过 24 MiB")
+        options = json.loads(serialized)
+        for key in ("i2i", "inpaint"):
+            if key in options and not isinstance(options[key], dict):
+                raise ValueError(f"NovelAI {key} 必须是 JSON 对象")
+        for key, maximum in (
+            ("characters", 6),
+            ("character_references", 16),
+            ("vibe_references", 16),
+        ):
+            if key not in options:
+                continue
+            entries = options[key]
+            if (
+                not isinstance(entries, list)
+                or len(entries) > maximum
+                or any(not isinstance(entry, dict) for entry in entries)
+            ):
+                raise ValueError(f"NovelAI {key} 必须是最多 {maximum} 项的对象数组")
+        action = options.get("action")
+        if action is not None and not isinstance(action, str):
+            raise ValueError("NovelAI action 必须是 generate、img2img 或 infill")
+        mask_token = payload.get("novelai_mask_token")
+        if mask_token is not None:
+            if not isinstance(mask_token, str) or not mask_token:
+                raise ValueError("局部重绘蒙版 token 必须是非空字符串")
+            if "i2i" in options or action in {"generate", "img2img"}:
+                raise ValueError("当前生成模式不能使用局部重绘蒙版")
+            mask_path = self._uploaded_image_path(mask_token)
+            if not mask_path:
+                raise ValueError("局部重绘蒙版不存在或已失效，请重新上传")
+            options.setdefault("inpaint", {})["mask"] = str(mask_path)
+        uploaded_references = payload.get("novelai_character_references")
+        if uploaded_references is not None:
+            if not isinstance(uploaded_references, list) or any(
+                not isinstance(entry, dict) for entry in uploaded_references
+            ):
+                raise ValueError("角色精确参考必须是对象数组")
+            references = options.setdefault("character_references", [])
+            if len(references) + len(uploaded_references) > 16:
+                raise ValueError("角色精确参考最多允许 16 项")
+            for entry in uploaded_references:
+                token = entry.get("token")
+                if not isinstance(token, str) or not token:
+                    raise ValueError("角色精确参考 token 必须是非空字符串")
+                image_path = self._uploaded_image_path(token)
+                if not image_path:
+                    raise ValueError("角色精确参考不存在或已失效，请重新上传")
+                references.append(
+                    {
+                        "image": str(image_path),
+                        "type": entry.get("type", "character"),
+                        "strength": entry.get("strength", 1.0),
+                        "fidelity": entry.get("fidelity", 1.0),
+                    }
+                )
+        return validate_novelai_options(options) or None
+
     async def page_generate(self):
         """Submit one image generation task from the Dashboard Page.
 
@@ -1333,6 +1445,13 @@ class ImageGenerationPageAPI:
         if not isinstance(payload, dict):
             return error_response("请求体必须是 JSON 对象", status_code=400)
         prompt = str(payload.get("prompt") or "").strip()
+        negative_prompt = payload.get("negative_prompt")
+        if negative_prompt is not None and not isinstance(negative_prompt, str):
+            return error_response("反向提示词必须是字符串或 null", status_code=400)
+        try:
+            novelai = self._parse_novelai_page_options(payload)
+        except (TypeError, ValueError) as exc:
+            return error_response(str(exc), status_code=400)
         image_count = plugin.normalize_image_count(payload.get("image_count"))
         aspect_ratio = str(
             payload.get("aspect_ratio") or plugin.config_manager.default_aspect_ratio
@@ -1343,12 +1462,61 @@ class ImageGenerationPageAPI:
         model = str(payload.get("model") or "").strip()
         presets = payload.get("presets") or None
         personas = payload.get("personas") or None
-        upload_tokens = payload.get("reference_tokens") or []
-        reference_sources = [
-            str(path)
-            for token in upload_tokens
-            if (path := self._uploaded_image_path(str(token)))
-        ]
+        selected_provider = plugin.config_manager.adapter_config
+        if model and model != (
+            f"{selected_provider.name}/{selected_provider.model}"
+            if selected_provider
+            else ""
+        ):
+            selected_provider = next(
+                (
+                    provider
+                    for provider in getattr(
+                        plugin.config_manager, "_all_provider_configs", []
+                    )
+                    if any(
+                        model
+                        == (
+                            f"{provider.name.strip()}/{candidate}"
+                            if provider.name.strip()
+                            else candidate
+                        )
+                        for candidate in provider.available_models
+                    )
+                ),
+                None,
+            )
+        selected_is_novelai = bool(
+            selected_provider and selected_provider.type == AdapterType.NOVELAI
+        )
+        if novelai and not selected_is_novelai:
+            return error_response("当前模型不支持 NovelAI 高级参数", status_code=400)
+        upload_tokens = payload.get("reference_tokens")
+        if upload_tokens is None:
+            upload_tokens = []
+        if selected_is_novelai:
+            if not isinstance(upload_tokens, list) or any(
+                not isinstance(token, str) or not token for token in upload_tokens
+            ):
+                return error_response("源图 token 必须是字符串数组", status_code=400)
+            reference_sources = []
+            for token in upload_tokens:
+                path = self._uploaded_image_path(token)
+                if not path:
+                    return error_response(
+                        "源图不存在或已失效，请重新上传", status_code=400
+                    )
+                reference_sources.append(str(path))
+            if novelai and novelai.get("action") == "generate":
+                reference_sources = []
+            if len(reference_sources) > 1:
+                return error_response("NovelAI 最多使用一张源图", status_code=400)
+        else:
+            reference_sources = [
+                str(path)
+                for token in upload_tokens
+                if (path := self._uploaded_image_path(str(token)))
+            ]
         if model and model != (
             f"{plugin.config_manager.adapter_config.name}/{plugin.config_manager.adapter_config.model}"
             if plugin.config_manager.adapter_config
@@ -1410,6 +1578,8 @@ class ImageGenerationPageAPI:
 
         result = await plugin.public_api.submit_generation_task(
             prompt=prompt,
+            negative_prompt=negative_prompt,
+            novelai=novelai,
             source="Page",
             unified_msg_origin=page_user_origin,
             image_count=image_count,

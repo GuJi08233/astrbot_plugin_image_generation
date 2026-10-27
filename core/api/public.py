@@ -15,6 +15,8 @@ from ..config.templates import (
     normalize_name_items,
     parse_preset_prompt,
 )
+from ..generation.novelai_assets import prepare_novelai_assets
+from ..generation.novelai_options import validate_novelai_options
 from ..generation.reference_collector import (
     collect_reference_images_from_personas,
     deduplicate_reference_images,
@@ -58,6 +60,8 @@ class ImageGenerationPublicAPI:
         self,
         *,
         prompt: str = "",
+        negative_prompt: str | None = None,
+        novelai: dict[str, Any] | None = None,
         unified_msg_origin: str | None = None,
         source: str = DEFAULT_SOURCE,
         image_count: int | None = None,
@@ -73,8 +77,14 @@ class ImageGenerationPublicAPI:
         """Submit a background image generation task and return its task id.
 
         Args:
+            negative_prompt: Per-task override. None inherits the provider default;
+                an empty string clears it for this task.
+            novelai: Optional per-task sampling, characters, editing, and references.
             image_size: Explicit manual NovelAI pixel dimensions. Omit this to
                 restrict automatic dimensions to the four standard sizes.
+
+        Returns:
+            A submission result with the accepted task ID or rejection reason.
         """
         plugin = self._plugin
         if not plugin.generator or not plugin.generator.adapter:
@@ -88,6 +98,38 @@ class ImageGenerationPublicAPI:
                 PublicAPIResultCode.API_KEY_MISSING,
                 "未配置 API Key，无法生成图片",
             )
+
+        if negative_prompt is not None:
+            if not isinstance(negative_prompt, str):
+                return self._submit_error(
+                    PublicAPIResultCode.REJECTED,
+                    "反向提示词必须是字符串或 null",
+                )
+            if not (
+                plugin.generator.adapter.get_capabilities()
+                & ImageCapability.NEGATIVE_PROMPT
+            ):
+                return self._submit_error(
+                    PublicAPIResultCode.REJECTED,
+                    "当前生图接口不支持反向提示词输入",
+                )
+
+        if novelai is not None:
+            if not (
+                plugin.generator.adapter.get_capabilities()
+                & ImageCapability.NOVELAI_OPTIONS
+            ):
+                return self._submit_error(
+                    PublicAPIResultCode.REJECTED,
+                    "当前生图接口不支持 NovelAI 专属参数",
+                )
+            try:
+                novelai = validate_novelai_options(novelai)
+            except (TypeError, ValueError) as exc:
+                return self._submit_error(
+                    PublicAPIResultCode.REJECTED,
+                    f"NovelAI 参数错误: {exc}",
+                )
 
         if image_size is not None:
             adapter_config = plugin.config_manager.adapter_config
@@ -148,7 +190,11 @@ class ImageGenerationPublicAPI:
                 PublicAPIResultCode.TEMPLATE_NOT_FOUND,
                 parse_error,
             )
-        if not final_prompt:
+        has_character_prompt = any(
+            character.get("enabled", True) and character.get("prompt")
+            for character in (novelai or {}).get("characters", [])
+        )
+        if not final_prompt and not has_character_prompt:
             return self._submit_error(
                 PublicAPIResultCode.EMPTY_PROMPT,
                 "请提供图片生成提示词、预设或人设",
@@ -176,8 +222,17 @@ class ImageGenerationPublicAPI:
                     check_result,
                 )
 
+        audit_prompt = final_prompt
+        if novelai:
+            character_prompts = [
+                character["prompt"]
+                for character in novelai.get("characters", [])
+                if character.get("enabled", True)
+            ]
+            if character_prompts:
+                audit_prompt = "\n".join([final_prompt, *character_prompts])
         prompt_allowed, prompt_reason = await plugin.safety_auditor.audit_prompt(
-            final_prompt,
+            audit_prompt,
             scope,
         )
         if not prompt_allowed:
@@ -227,6 +282,11 @@ class ImageGenerationPublicAPI:
                 unified_msg_origin=scope,
                 request_source=request_source,
             )
+            prepared_novelai = await prepare_novelai_assets(
+                novelai,
+                image_processor=plugin.image_processor,
+                unified_msg_origin=scope,
+            )
 
             preset_summary, preset_label = format_template_summary(
                 matched_presets,
@@ -236,6 +296,8 @@ class ImageGenerationPublicAPI:
                 task_id=task_id,
                 source=request_source,
                 prompt=final_prompt,
+                negative_prompt=negative_prompt,
+                novelai=prepared_novelai,
                 images_data=references,
                 unified_msg_origin=scope,
                 aspect_ratio=str(final_aspect_ratio),
@@ -428,6 +490,8 @@ class ImageGenerationPublicAPI:
         self,
         *,
         prompt: str = "",
+        negative_prompt: str | None = None,
+        novelai: dict[str, Any] | None = None,
         unified_msg_origin: str | None = None,
         source: str = DEFAULT_SOURCE,
         image_count: int | None = None,
@@ -442,9 +506,20 @@ class ImageGenerationPublicAPI:
         timeout_seconds: float | None = None,
         poll_interval_seconds: float = DEFAULT_WAIT_POLL_INTERVAL_SECONDS,
     ) -> ImageGenerationResult:
-        """Submit an image generation task and wait for local image file paths."""
+        """Submit an image generation task and wait for local image file paths.
+
+        Args:
+            negative_prompt: Per-task override. None inherits the provider default;
+                an empty string clears it for this task.
+            novelai: Optional per-task sampling, characters, editing, and references.
+
+        Returns:
+            Generated file paths or the task failure result.
+        """
         submit_result = await self.submit_generation_task(
             prompt=prompt,
+            negative_prompt=negative_prompt,
+            novelai=novelai,
             unified_msg_origin=unified_msg_origin,
             source=source,
             image_count=image_count,

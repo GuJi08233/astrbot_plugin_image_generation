@@ -13,8 +13,8 @@ from astrbot.api import logger
 from ..core.adapters.async_polling import (
     ASYNC_AMBIGUOUS_SUBMIT_ERROR,
     AsyncAttemptContext,
-    AsyncPollResult,
     AsyncPollingImageAdapter,
+    AsyncPollResult,
     AsyncRemoteStatus,
     AsyncSubmitResult,
 )
@@ -37,7 +37,7 @@ class ModelScopeAdapter(AsyncPollingImageAdapter):
 
     def get_capabilities(self) -> ImageCapability:
         """Return provider capabilities selected in the configuration."""
-        return self._get_configured_capabilities()
+        return self._get_configured_capabilities() | ImageCapability.NEGATIVE_PROMPT
 
     async def _submit_task(
         self,
@@ -197,7 +197,9 @@ class ModelScopeAdapter(AsyncPollingImageAdapter):
             "model": self.model or self.DEFAULT_MODEL,
             "prompt": request.prompt,
         }
-        if negative_prompt := str(
+        if request.negative_prompt is not None:
+            payload["negative_prompt"] = request.negative_prompt
+        elif negative_prompt := str(
             self.config.extra.get("negative_prompt") or ""
         ).strip():
             payload["negative_prompt"] = negative_prompt

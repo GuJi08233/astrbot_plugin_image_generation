@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import Any
 
 from astrbot.api import logger
 from astrbot.api.event import MessageChain
@@ -86,6 +87,8 @@ class GenerationExecutor:
         deliver_via_ai: bool = False,
         auto_send: bool = True,
         image_size: tuple[int, int] | None = None,
+        negative_prompt: str | None = None,
+        novelai: dict[str, Any] | None = None,
     ) -> None:
         """Generate images and optionally send them to the user.
 
@@ -101,6 +104,9 @@ class GenerationExecutor:
             deliver_via_ai: Whether results are handed back to the AI tool flow.
             auto_send: Whether to send generated images to the user directly.
             image_size: Optional manually selected NovelAI pixel dimensions.
+            negative_prompt: Per-task override. None inherits the provider default;
+                an empty string clears it for this task.
+            novelai: Optional structured NovelAI controls and prepared assets.
         """
         if not self.generator or not self.generator.adapter:
             if task_id:
@@ -181,6 +187,8 @@ class GenerationExecutor:
                 deliver_via_ai,
                 auto_send,
                 image_size,
+                negative_prompt,
+                novelai,
             )
         except (asyncio.CancelledError, Exception):
             self.release_generation_task_quota_once(task_id)
@@ -243,6 +251,8 @@ class GenerationExecutor:
         deliver_via_ai: bool = False,
         auto_send: bool = True,
         image_size: tuple[int, int] | None = None,
+        negative_prompt: str | None = None,
+        novelai: dict[str, Any] | None = None,
     ) -> None:
         """Execute generation logic and deliver results."""
         start_time = time.time()
@@ -269,6 +279,8 @@ class GenerationExecutor:
             resolution=resolution,
             image_count=image_count,
             image_size=image_size,
+            negative_prompt=negative_prompt,
+            novelai=novelai,
         )
 
         duration = time.time() - start_time
@@ -416,6 +428,8 @@ class GenerationExecutor:
         resolution: str | None,
         image_count: int,
         image_size: tuple[int, int] | None = None,
+        negative_prompt: str | None = None,
+        novelai: dict[str, Any] | None = None,
     ) -> tuple[list[str], list[str]]:
         """Generate all requested images concurrently under request-level limits."""
         generated_file_paths: list[str] = []
@@ -451,6 +465,8 @@ class GenerationExecutor:
                 self._generate_one_image_request(
                     GenerationRequest(
                         prompt=prompt,
+                        negative_prompt=negative_prompt,
+                        novelai=novelai,
                         images=images,
                         aspect_ratio=aspect_ratio,
                         resolution=resolution,

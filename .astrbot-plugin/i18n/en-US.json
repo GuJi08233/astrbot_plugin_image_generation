@@ -29,6 +29,10 @@
         "title": "Create generation task",
         "prompt": "Prompt",
         "promptPlaceholder": "Describe the image you want, or select only presets/personas.",
+        "negativePrompt": "Negative prompt",
+        "useDefaultNegativePrompt": "Use the provider's default negative prompt",
+        "negativePromptPlaceholder": "Describe what to avoid for this task. Uncheck the default option and leave this empty to clear the negative prompt for this task.",
+        "negativePromptHint": "Used with the positive prompt in the same generation request. Overrides this task only; provider defaults stay unchanged.",
         "model": "Model",
         "imageCount": "Image count",
         "aspectRatio": "Aspect ratio",
@@ -52,7 +56,9 @@
         "resultTitle": "Current generation",
         "resultCount": "{count} tasks",
         "openTask": "Open in tasks",
-        "clearResult": "Dismiss result"
+        "clearResult": "Dismiss result",
+        "negativePromptPromptHint": "Combined with the positive prompt as semantic constraints in the same request, without a separate negative-conditioning channel. Provider defaults stay unchanged.",
+        "negativePromptParameterHint": "Sent as a separate negative_prompt field in the same request. Requires a compatible service that explicitly supports this extension. Provider defaults stay unchanged."
       },
       "tasks": {
         "eyebrow": "Queue",
@@ -159,6 +165,49 @@
       "lightbox": {
         "close": "Close",
         "open": "View full image"
+      },
+      "novelai": {
+        "title": "NovelAI advanced settings",
+        "mode": "Generation mode",
+        "modeAuto": "Auto (source image and mask)",
+        "modeText": "Text to image",
+        "modeImage": "Image to image",
+        "modeInpaint": "Inpainting",
+        "parameters": "Sampling and character overrides (JSON)",
+        "parametersHint": "Leave empty to inherit provider defaults. Supports steps, sampler, scale, seed, noise_schedule, cfg_rescale, sm, sm_dyn, dynamic_thresholding, variety_boost, and characters. Use A1–E5 or [x,y] for up to 6 character positions. Set dimensions using the fields above.",
+        "sourceImage": "Image-to-image / inpainting source (one image)",
+        "sourceHint": "Auto uses image-to-image when a source exists and inpainting when a mask exists. Text-to-image mode ignores the source. Add character and Vibe references separately in advanced settings.",
+        "mask": "Inpainting mask",
+        "maskHint": "White areas are regenerated; black areas are preserved. Upload a mask matching the source dimensions. Inpainting requires one source image.",
+        "characterReferences": "Precise character references",
+        "characterReferencesHint": "Upload references for supported NAI4.5 models and set each reference type, strength, and fidelity. Cannot be combined with Vibe; these images are not image-to-image sources.",
+        "referenceType": "Reference type",
+        "type": {
+          "character": "Character",
+          "style": "Style",
+          "character&style": "Character and style"
+        },
+        "strength": "Strength",
+        "fidelity": "Fidelity",
+        "vibe": "Encoded Vibe",
+        "vibePlaceholder": "Paste encoded Base64, or [{\"encoding\":\"...\",\"information_extracted\":1,\"strength\":0.6}]",
+        "vibeHint": "V4 models require pre-encoded data, with up to 16 references. This page does not call paid encoding endpoints. For V3 image references, set image, information_extracted, and strength under vibe_references in advanced JSON.",
+        "vibeFile": "Import Vibe (.naiv4vibe / JSON / Base64 text)",
+        "invalidJson": "Advanced parameters must be a valid JSON object; i2i and inpaint must also be objects.",
+        "parametersTooLarge": "Advanced JSON must contain at most 65,536 characters.",
+        "modeConflict": "Generation mode conflicts with image-to-image or inpainting options. Check the JSON and mask.",
+        "maskRequired": "Inpainting requires an uploaded mask or inpaint.mask in advanced JSON.",
+        "oneSource": "NovelAI image-to-image and inpainting accept one source image. Upload one mask separately.",
+        "vibeTooLarge": "Encoded Vibe text must not exceed 16 MiB.",
+        "invalidVibe": "Vibe must be encoded Base64, a JSON object with encoding, or an array of such objects.",
+        "invalidList": "{name} must be an array of at most {maximum} objects.",
+        "referencesTooMany": "At most 16 precise references are allowed, including references in advanced JSON.",
+        "referenceVibeConflict": "Precise references and Vibe cannot be combined.",
+        "vibeVariant": "Choose an encoded variant from the imported file",
+        "vibeVariantRequired": "Choose an encoded variant before generating",
+        "vibeInformation": "Information extracted",
+        "invalidVibeFile": "Cannot read this Vibe file: a supported format and valid encoded variants are required.",
+        "vibeModelMismatch": "The file has no encoding for this model, or the selected model changed after import. Import a file for the selected model."
       }
     }
   },
@@ -262,7 +311,19 @@
           },
           "extra_body_json": {
             "description": "Extra request body JSON",
-            "hint": "Optional. Enter a JSON object to merge into the top level of the Chat Completions request body."
+            "hint": "Optional JSON object merged into the request body. With an explicit task negative prompt (including an empty string) or a nonempty provider default, the current prompt/image pair takes precedence over extra messages and negative_prompt."
+          },
+          "negative_prompt": {
+            "description": "Default negative prompt",
+            "hint": "Override per generation with negative_prompt in the WebUI or LLM tool. Omit it or pass null to inherit; pass an empty string to clear it for this task."
+          },
+          "negative_prompt_mode": {
+            "description": "Negative prompt delivery",
+            "hint": "prompt (default): combine with the positive prompt as semantic constraints in one request, for models without a separate negative-conditioning channel such as GPT Image and Z-Image-Turbo. parameter: send a separate negative_prompt field only to compatible services that explicitly support it.",
+            "labels": [
+              "Combine into prompt (default)",
+              "Pass as a separate field"
+            ]
           }
         },
         "openai": {
@@ -322,6 +383,18 @@
               "png",
               "jpeg",
               "webp"
+            ]
+          },
+          "negative_prompt": {
+            "description": "Default negative prompt",
+            "hint": "Override per generation with negative_prompt in the WebUI or LLM tool. Omit it or pass null to inherit; pass an empty string to clear it for this task."
+          },
+          "negative_prompt_mode": {
+            "description": "Negative prompt delivery",
+            "hint": "prompt (default): combine with the positive prompt as semantic constraints in one request, for models without a separate negative-conditioning channel such as GPT Image and Z-Image-Turbo. parameter: send a separate negative_prompt field only to compatible services that explicitly support it.",
+            "labels": [
+              "Combine into prompt (default)",
+              "Pass as a separate field"
             ]
           }
         },

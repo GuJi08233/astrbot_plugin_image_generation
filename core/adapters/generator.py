@@ -9,6 +9,7 @@ from ..shared.types import (
     AdapterType,
     GenerationRequest,
     GenerationResult,
+    ImageCapability,
     ImageData,
 )
 
@@ -84,6 +85,8 @@ class ImageGenerator:
         """Build a request with already converted reference images."""
         return GenerationRequest(
             prompt=request.prompt,
+            negative_prompt=request.negative_prompt,
+            novelai=request.novelai,
             images=images,
             aspect_ratio=request.aspect_ratio,
             resolution=request.resolution,
@@ -103,6 +106,16 @@ class ImageGenerator:
         """Generate an image request with preconverted reference images."""
         if not self.adapter:
             return GenerationResult(images=None, error="适配器未初始化")
+
+        capabilities = self.adapter.get_capabilities()
+        if request.novelai is not None and not (
+            capabilities & ImageCapability.NOVELAI_OPTIONS
+        ):
+            return GenerationResult(error="当前生图接口不支持 NovelAI 专属参数")
+        if request.negative_prompt is not None and not (
+            capabilities & ImageCapability.NEGATIVE_PROMPT
+        ):
+            return GenerationResult(error="当前生图接口不支持反向提示词输入")
 
         patched_request = self.build_generation_request(request, images=images)
         logger.debug(

@@ -32,6 +32,8 @@ class ImageCapability(enum.Flag):
     IMAGE_TO_IMAGE = enum.auto()  # Image-to-image generation.
     RESOLUTION = enum.auto()  # Explicit resolution support.
     ASPECT_RATIO = enum.auto()  # Explicit aspect-ratio support.
+    NEGATIVE_PROMPT = enum.auto()  # Request-scoped negative prompt input.
+    NOVELAI_OPTIONS = enum.auto()  # Structured NovelAI generation controls.
 
 
 @dataclass
@@ -90,6 +92,9 @@ class GenerationRequest:
         compare=False,
     )
     image_size: tuple[int, int] | None = None  # Explicit manual pixel dimensions.
+    # None inherits the provider default; an empty string clears it.
+    negative_prompt: str | None = None
+    novelai: dict[str, Any] | None = None
 
 
 @dataclass

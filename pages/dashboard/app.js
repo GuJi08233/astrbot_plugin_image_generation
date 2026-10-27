@@ -45,6 +45,51 @@ const FALLBACK = {
   'form.title': '创建生图任务',
   'form.prompt': '提示词',
   'form.promptPlaceholder': '描述你想生成的画面，也可以只选择预设或人设。',
+  'form.negativePrompt': '反向提示词',
+  'form.useDefaultNegativePrompt': '使用供应商默认反向提示词',
+  'form.negativePromptPlaceholder': '填写本次希望避免的内容。取消使用默认值并留空，可清空本次反向提示词。',
+  'form.negativePromptHint': '与正向提示词用于同一次生图。仅覆盖本次反向词，不修改供应商默认配置。',
+  'form.negativePromptPromptHint': '本次反向词会与正向词合并为同一次请求中的语义约束，不使用独立负向通道。不会修改供应商默认值。',
+  'form.negativePromptParameterHint': '本次反向词将作为独立 negative_prompt 字段随同一次请求发送；需要兼容服务明确支持该扩展。不会修改供应商默认值。',
+  'novelai.title': 'NovelAI 高级设置',
+  'novelai.mode': '生成模式',
+  'novelai.modeAuto': '自动（根据源图和蒙版）',
+  'novelai.modeText': '文生图',
+  'novelai.modeImage': '图生图',
+  'novelai.modeInpaint': '局部重绘',
+  'novelai.parameters': '本次采样与多角色参数（JSON）',
+  'novelai.parametersHint': '留空继承供应商默认值。支持 steps、sampler、scale、seed、noise_schedule、cfg_rescale、sm、sm_dyn、dynamic_thresholding、variety_boost 和 characters。角色位置为 A1–E5 或 [x,y]，最多 6 人。宽高使用上方输入框。',
+  'novelai.sourceImage': '图生图 / 局部重绘源图（最多 1 张）',
+  'novelai.sourceHint': '自动模式下有源图则图生图，有蒙版则局部重绘。文生图模式忽略源图；角色参考与 Vibe 在高级设置中单独填写。',
+  'novelai.mask': '局部重绘蒙版',
+  'novelai.maskHint': '白色区域重绘，黑色区域保留。上传与源图尺寸一致的蒙版；局部重绘需要一张源图。',
+  'novelai.characterReferences': '角色精确参考',
+  'novelai.characterReferencesHint': '为受支持的 NAI4.5 模型上传参考图，逐张设置类型、强度和保真度。不能与 Vibe 同时使用；这些图片不会作为图生图源图。',
+  'novelai.referenceType': '参考类型',
+  'novelai.type.character': '角色',
+  'novelai.type.style': '风格',
+  'novelai.type.character&style': '角色与风格',
+  'novelai.strength': '强度',
+  'novelai.fidelity': '保真度',
+  'novelai.vibe': '已编码 Vibe',
+  'novelai.vibePlaceholder': '粘贴已编码 Base64，或 [{"encoding":"...","information_extracted":1,"strength":0.6}]',
+  'novelai.vibeHint': 'V4 系列必须提供已编码数据，最多 16 项。此处不会调用付费编码接口。V3 图片参考可在高级 JSON 的 vibe_references 中填写 image、information_extracted 和 strength。',
+  'novelai.vibeFile': '导入 Vibe（.naiv4vibe / JSON / Base64 文本）',
+  'novelai.vibeVariant': '选择导入文件中的编码变体',
+  'novelai.vibeVariantRequired': '请选择一个编码变体后再生成',
+  'novelai.vibeInformation': '信息提取量',
+  'novelai.invalidVibeFile': '无法读取该 Vibe 文件：需要受支持的格式和有效的编码变体。',
+  'novelai.vibeModelMismatch': '导入文件没有当前模型的编码，或导入后更换了模型。请为当前模型重新导入。',
+  'novelai.invalidJson': '高级参数必须是有效的 JSON 对象，i2i 和 inpaint 也必须是对象。',
+  'novelai.parametersTooLarge': '高级参数 JSON 不能超过 65,536 字符。',
+  'novelai.modeConflict': '生成模式与图生图或局部重绘参数冲突，请检查 JSON 和蒙版。',
+  'novelai.maskRequired': '局部重绘需要上传蒙版，或在高级 JSON 的 inpaint.mask 中指定蒙版。',
+  'novelai.oneSource': 'NovelAI 图生图或局部重绘最多使用一张源图，蒙版也必须单独上传一张。',
+  'novelai.vibeTooLarge': '已编码 Vibe 文本不能超过 16 MiB。',
+  'novelai.invalidVibe': 'Vibe 必须是已编码 Base64、包含 encoding 的 JSON 对象或对象数组。',
+  'novelai.invalidList': '{name} 必须是最多 {maximum} 项的对象数组。',
+  'novelai.referencesTooMany': '角色精确参考最多允许 16 项（包括高级 JSON 中的参考）。',
+  'novelai.referenceVibeConflict': '角色精确参考和 Vibe 不能同时使用。',
   'form.model': '模型',
   'form.imageCount': '生成数量',
   'form.aspectRatio': '宽高比',
@@ -196,6 +241,9 @@ const appState = {
   lightbox: { open: false, src: '', title: '', downloadEndpoint: '', downloadName: '', taskId: '' },
   previewCache: {},
   uploads: [],
+  novelaiMask: null,
+  novelaiReferences: [],
+  novelaiVibeImport: null,
   auditUploads: [],
   auditTesting: false,
   currentView: 'overview',
@@ -478,20 +526,39 @@ function renderChips(container, entries, selectedValues, emptyKey) {
 
 function renderUploads() {
   const list = $('#uploadList');
-  if (!list) return;
-  if (!appState.uploads.length) {
-    list.innerHTML = '';
-    return;
+  if (list) {
+    list.innerHTML = appState.uploads
+      .map(
+        (item, index) => `<span class="upload-pill">
+          <strong>${escapeHtml(item.filename)}</strong>
+          <small>${escapeHtml(formatBytes(item.size))}</small>
+          <button type="button" data-upload-remove="${index}" aria-label="Remove">×</button>
+        </span>`,
+      )
+      .join('');
   }
-  list.innerHTML = appState.uploads
-    .map(
-      (item, index) => `<span class="upload-pill">
-        <strong>${escapeHtml(item.filename)}</strong>
-        <small>${escapeHtml(formatBytes(item.size))}</small>
-        <button type="button" data-upload-remove="${index}" aria-label="Remove">×</button>
-      </span>`,
-    )
-    .join('');
+  const maskList = $('#novelaiMaskList');
+  if (maskList) {
+    maskList.innerHTML = appState.novelaiMask
+      ? `<span class="upload-pill"><strong>${escapeHtml(appState.novelaiMask.filename)}</strong>
+        <button type="button" data-novelai-mask-remove aria-label="Remove">×</button></span>`
+      : '';
+  }
+  const referenceList = $('#novelaiCharacterList');
+  if (referenceList) {
+    referenceList.innerHTML = appState.novelaiReferences.map((item, index) => `
+      <div class="novelai-reference-row">
+        <span class="upload-pill"><strong>${escapeHtml(item.filename)}</strong>
+          <button type="button" data-novelai-reference-remove="${index}" aria-label="Remove">×</button></span>
+        <label class="field"><span>${escapeHtml(t('novelai.referenceType'))}</span>
+          <select data-novelai-reference-index="${index}" data-novelai-reference-key="type">
+            ${['character', 'style', 'character&style'].map((value) => `<option value="${value}" ${item.type === value ? 'selected' : ''}>${escapeHtml(t(`novelai.type.${value}`))}</option>`).join('')}
+          </select></label>
+        ${['strength', 'fidelity'].map((key) => `<label class="field"><span>${escapeHtml(t(`novelai.${key}`))}</span>
+          <input type="number" min="0" max="1" step="0.05" value="${escapeHtml(item[key])}" required
+            data-novelai-reference-index="${index}" data-novelai-reference-key="${key}" /></label>`).join('')}
+      </div>`).join('');
+  }
 }
 
 function maxChartCount(items) {
@@ -877,11 +944,37 @@ async function loadStats(showMessage = false) {
   }
 }
 
-function renderGenerationSizeFields() {
+function renderGenerationModelFields() {
   const state = appState.pluginState || {};
   const model = $('#modelSelect')?.value || state.current_model || '';
   const settings = state.model_settings?.[model] || {};
   const isNovelAI = settings.adapter_type === 'novelai';
+  const mode = $('#novelaiModeSelect')?.value || 'auto';
+  const supportsImages = settings.supports_image_to_image ?? (isNovelAI || (model === state.current_model && state.supports_image_to_image));
+  if ($('#novelaiOptionsPanel')) $('#novelaiOptionsPanel').hidden = !isNovelAI;
+  if ($('#novelaiMaskField')) $('#novelaiMaskField').hidden = !['auto', 'infill'].includes(mode);
+  if ($('#referenceImageLabel')) $('#referenceImageLabel').textContent = t(isNovelAI ? 'novelai.sourceImage' : 'form.referenceImages');
+  if ($('#referenceInput')) {
+    $('#referenceInput').multiple = !isNovelAI;
+    $('#referenceInput').disabled = !supportsImages || (isNovelAI && mode === 'generate');
+  }
+  const uploadHint = $('#uploadPanel small');
+  if (uploadHint) {
+    uploadHint.textContent = t(isNovelAI ? 'novelai.sourceHint' : (supportsImages ? 'form.referenceHint' : 'form.referenceUnsupported'));
+  }
+  const supportsNegativePrompt = Boolean(settings.supports_negative_prompt);
+  if ($('#negativePromptField')) $('#negativePromptField').hidden = !supportsNegativePrompt;
+  if ($('#negativePromptHint')) {
+    const hint = ['openai', 'openai_chat'].includes(settings.adapter_type)
+      ? (settings.negative_prompt_mode === 'parameter' ? 'form.negativePromptParameterHint' : 'form.negativePromptPromptHint')
+      : 'form.negativePromptHint';
+    $('#negativePromptHint').textContent = t(hint);
+  }
+  const useDefaultNegativePrompt = $('#useDefaultNegativePrompt');
+  if (useDefaultNegativePrompt) useDefaultNegativePrompt.disabled = !supportsNegativePrompt;
+  if ($('#negativePromptInput')) {
+    $('#negativePromptInput').disabled = !supportsNegativePrompt || useDefaultNegativePrompt?.checked !== false;
+  }
   const modelChanged = appState.generationSizeModel !== model;
   for (const id of ['aspectRatioField', 'resolutionField']) {
     if ($(`#${id}`)) $(`#${id}`).hidden = isNovelAI;
@@ -918,22 +1011,13 @@ function renderState() {
   renderSelect($('#modelSelect'), models, models.includes(selectedModel) ? selectedModel : state.current_model, t('form.noModels'));
   renderSelect($('#aspectRatioSelect'), ASPECT_RATIOS, state.default_aspect_ratio || '不指定', t('form.unspecified'));
   renderSelect($('#resolutionSelect'), RESOLUTIONS, state.default_resolution || '不指定', t('form.unspecified'));
-  renderGenerationSizeFields();
+  renderGenerationModelFields();
   if ($('#imageCountInput')) {
     $('#imageCountInput').value = state.default_image_count || 1;
     $('#imageCountInput').max = state.max_image_count || 1;
   }
   renderChips($('#presetList'), state.presets || [], currentPresets, 'form.noPresets');
   renderChips($('#personaList'), state.personas || [], currentPersonas, 'form.noPersonas');
-  if ($('#referenceInput')) {
-    $('#referenceInput').disabled = !state.supports_image_to_image;
-  }
-  const uploadHint = $('#uploadPanel small');
-  if (uploadHint) {
-    uploadHint.textContent = state.supports_image_to_image
-      ? t('form.referenceHint')
-      : t('form.referenceUnsupported');
-  }
 }
 
 async function loadState(showMessage = false) {
@@ -1669,6 +1753,87 @@ async function cancelGenerateTask(taskId) {
   }
 }
 
+function buildNovelaiPageOptions(payload) {
+  if (appState.novelaiVibeImport) {
+    const selectedModel = appState.pluginState?.model_settings?.[payload.model]?.model || payload.model.split('/').at(-1);
+    if (selectedModel !== appState.novelaiVibeImport.model) throw new Error(t('novelai.vibeModelMismatch'));
+    if (!$('#novelaiVibeVariantSelect')?.value && appState.novelaiVibeImport.variants.length > 1) {
+      throw new Error(t('novelai.vibeVariantRequired'));
+    }
+  }
+  const raw = $('#novelaiParametersInput')?.value?.trim() || '';
+  if (raw.length > 65536) throw new Error(t('novelai.parametersTooLarge'));
+  let options = {};
+  if (raw) {
+    try {
+      options = JSON.parse(raw);
+    } catch {
+      throw new Error(t('novelai.invalidJson'));
+    }
+    if (!options || typeof options !== 'object' || Array.isArray(options)) {
+      throw new Error(t('novelai.invalidJson'));
+    }
+  }
+  const mode = $('#novelaiModeSelect')?.value || 'auto';
+  if (mode !== 'auto') {
+    if (options.action && options.action !== mode) throw new Error(t('novelai.modeConflict'));
+    options.action = mode;
+    if (mode === 'generate') payload.reference_tokens = [];
+    if (mode === 'img2img') options.i2i ??= {};
+    if (mode === 'infill') options.inpaint ??= {};
+  }
+  for (const key of ['i2i', 'inpaint']) {
+    if (key in options && (!options[key] || typeof options[key] !== 'object' || Array.isArray(options[key]))) {
+      throw new Error(t('novelai.invalidJson'));
+    }
+  }
+  if (appState.novelaiMask && ['auto', 'infill'].includes(mode)) {
+    payload.novelai_mask_token = appState.novelaiMask.token;
+    options.inpaint ??= {};
+  }
+  if (
+    ('i2i' in options && 'inpaint' in options)
+    || (options.action === 'generate' && ('i2i' in options || 'inpaint' in options))
+    || (options.action === 'img2img' && 'inpaint' in options)
+    || (options.action === 'infill' && 'i2i' in options)
+  ) throw new Error(t('novelai.modeConflict'));
+  if ('inpaint' in options && !options.inpaint.mask && !payload.novelai_mask_token) {
+    throw new Error(t('novelai.maskRequired'));
+  }
+  if (options.action === 'generate') payload.reference_tokens = [];
+  if (payload.reference_tokens.length > 1) throw new Error(t('novelai.oneSource'));
+  const vibeText = $('#novelaiVibeInput')?.value?.trim() || '';
+  if (vibeText.length > 16 * 1024 * 1024) throw new Error(t('novelai.vibeTooLarge'));
+  if (vibeText) {
+    let references;
+    try {
+      references = ['[', '{'].includes(vibeText[0]) ? JSON.parse(vibeText) : vibeText;
+    } catch {
+      throw new Error(t('novelai.invalidVibe'));
+    }
+    if (!Array.isArray(references)) references = [references];
+    references = references.map((entry) => typeof entry === 'string' ? { encoding: entry, information_extracted: 1, strength: 0.6 } : entry);
+    if (!Array.isArray(options.vibe_references ?? [])) throw new Error(t('novelai.invalidVibe'));
+    options.vibe_references = [...(options.vibe_references || []), ...references];
+  }
+  for (const [key, maximum] of [['characters', 6], ['character_references', 16], ['vibe_references', 16]]) {
+    if (!(key in options)) continue;
+    if (!Array.isArray(options[key]) || options[key].length > maximum || options[key].some((entry) => !entry || typeof entry !== 'object' || Array.isArray(entry))) {
+      throw new Error(t('novelai.invalidList', { name: key, maximum }));
+    }
+  }
+  if ((options.character_references?.length || 0) + appState.novelaiReferences.length > 16) {
+    throw new Error(t('novelai.referencesTooMany'));
+  }
+  if ((options.character_references?.length || appState.novelaiReferences.length) && options.vibe_references?.length) {
+    throw new Error(t('novelai.referenceVibeConflict'));
+  }
+  if (appState.novelaiReferences.length) {
+    payload.novelai_character_references = appState.novelaiReferences.map(({ token, type, strength, fidelity }) => ({ token, type, strength, fidelity }));
+  }
+  return Object.keys(options).length ? options : null;
+}
+
 async function submitTask(event) {
   event.preventDefault();
   const button = $('#submitBtn');
@@ -1688,6 +1853,9 @@ async function submitTask(event) {
       reference_tokens: appState.uploads.map((item) => item.token),
     };
     const modelSettings = appState.pluginState?.model_settings?.[payload.model] || {};
+    if (modelSettings.supports_negative_prompt && $('#useDefaultNegativePrompt')?.checked === false) {
+      payload.negative_prompt = $('#negativePromptInput')?.value?.trim() || '';
+    }
     if (modelSettings.adapter_type === 'novelai') {
       const width = Number($('#imageWidthInput')?.value);
       const height = Number($('#imageHeightInput')?.value);
@@ -1701,6 +1869,8 @@ async function submitTask(event) {
       payload.height = height;
       delete payload.aspect_ratio;
       delete payload.resolution;
+      const novelai = buildNovelaiPageOptions(payload);
+      if (novelai) payload.novelai = novelai;
     }
     const result = await apiPost('page/generate', payload);
     const taskId = result.task_id || '';
@@ -1832,16 +2002,89 @@ async function runAuditTest() {
   }
 }
 
-async function uploadReferences(files) {
+async function importNovelaiVibeFile(file) {
+  if (file.size > 16 * 1024 * 1024) throw new Error(t('novelai.vibeTooLarge'));
+  const text = await file.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    if (file.name?.toLowerCase().endsWith('.naiv4vibe')) throw new Error(t('novelai.invalidVibeFile'));
+  }
+  appState.novelaiVibeImport = null;
+  if ($('#novelaiVibeVariantField')) $('#novelaiVibeVariantField').hidden = true;
+  if (data?.identifier !== 'novelai-vibe-transfer') {
+    if (file.name?.toLowerCase().endsWith('.naiv4vibe')) throw new Error(t('novelai.invalidVibeFile'));
+    $('#novelaiVibeInput').value = text;
+    return;
+  }
+  if (data.version !== 1 || data.type !== 'image' || !data.encodings || typeof data.encodings !== 'object') {
+    throw new Error(t('novelai.invalidVibeFile'));
+  }
+  const selected = $('#modelSelect')?.value || appState.pluginState?.current_model || '';
+  const settings = appState.pluginState?.model_settings?.[selected] || {};
+  const model = settings.model || selected.split('/').at(-1);
+  const modelKeys = {
+    'nai-diffusion-4-5-full': 'v4-5full',
+    'nai-diffusion-4-5-curated': 'v4-5curated',
+    'nai-diffusion-4-full': 'v4full',
+    'nai-diffusion-4-curated': 'v4curated',
+    'nai-diffusion-4-curated-preview': 'v4curated',
+  };
+  const bucket = data.encodings[modelKeys[model]];
+  if (settings.adapter_type !== 'novelai' || !modelKeys[model] || !bucket || typeof bucket !== 'object' || Array.isArray(bucket)) {
+    throw new Error(t('novelai.vibeModelMismatch'));
+  }
+  const strength = data.importInfo?.strength ?? 0.6;
+  if (!Number.isFinite(strength) || strength < 0 || strength > 1) throw new Error(t('novelai.invalidVibeFile'));
+  const variants = Object.entries(bucket).map(([key, entry]) => {
+    const information = entry?.params?.information_extracted;
+    if (typeof entry?.encoding !== 'string' || !entry.encoding || !Number.isFinite(information) || information <= 0 || information > 1) {
+      throw new Error(t('novelai.invalidVibeFile'));
+    }
+    return {key, encoding:entry.encoding, information_extracted:information, strength};
+  });
+  if (!variants.length || variants.length > 64) throw new Error(t('novelai.invalidVibeFile'));
+  appState.novelaiVibeImport = {model, variants};
+  if (variants.length === 1) {
+    const {key: _key, ...reference} = variants[0];
+    $('#novelaiVibeInput').value = JSON.stringify([reference], null, 2);
+    return;
+  }
+  $('#novelaiVibeInput').value = '';
+  const select = $('#novelaiVibeVariantSelect');
+  select.innerHTML = `<option value="">${escapeHtml(t('novelai.vibeVariantRequired'))}</option>` + variants.map((entry, index) =>
+    `<option value="${index}">${escapeHtml(t('novelai.vibeInformation'))} ${entry.information_extracted} · ${escapeHtml(entry.key.slice(0, 12))}</option>`).join('');
+  select.value = '';
+  $('#novelaiVibeVariantField').hidden = false;
+}
+
+async function uploadReferences(files, role = 'source') {
   if (!files.length) return;
-  const input = $('#referenceInput');
+  const input = $(role === 'mask' ? '#novelaiMaskInput' : (role === 'character' ? '#novelaiCharacterInput' : '#referenceInput'));
+  const model = $('#modelSelect')?.value || appState.pluginState?.current_model || '';
+  const isNovelAI = appState.pluginState?.model_settings?.[model]?.adapter_type === 'novelai';
+  if ((role === 'mask' && files.length !== 1) || (role === 'source' && isNovelAI && files.length + appState.uploads.length > 1)) {
+    showToast(t('novelai.oneSource'), true);
+    if (input) input.value = '';
+    return;
+  }
+  if (role === 'character' && files.length + appState.novelaiReferences.length > 16) {
+    showToast(t('novelai.referencesTooMany'), true);
+    if (input) input.value = '';
+    return;
+  }
   if (input) input.disabled = true;
   showToast(t('uploading'));
   try {
     for (const file of files) {
       const result = await appState.bridge.upload('page/reference/upload', file);
       if (result?.status === 'error') throw new Error(result.message || t('error.generic'));
-      appState.uploads.push(result);
+      if (!result?.token) throw new Error(t('error.generic'));
+      if (role === 'mask') appState.novelaiMask = result;
+      else if (role === 'character') appState.novelaiReferences.push({ ...result, type: 'character', strength: 1, fidelity: 1 });
+      else appState.uploads.push(result);
+      renderUploads();
     }
     renderUploads();
     showToast(t('message.uploaded'));
@@ -1850,8 +2093,9 @@ async function uploadReferences(files) {
   } finally {
     if (input) {
       input.value = '';
-      input.disabled = !(appState.pluginState?.supports_image_to_image);
+      input.disabled = false;
     }
+    renderGenerationModelFields();
   }
 }
 
@@ -2059,7 +2303,9 @@ function openTask(taskId) {
 
 function bindEvents() {
   $('#generationForm')?.addEventListener('submit', submitTask);
-  $('#modelSelect')?.addEventListener('change', () => renderGenerationSizeFields());
+  $('#modelSelect')?.addEventListener('change', () => renderGenerationModelFields());
+  $('#useDefaultNegativePrompt')?.addEventListener('change', () => renderGenerationModelFields());
+  $('#novelaiModeSelect')?.addEventListener('change', () => renderGenerationModelFields());
   $('#refreshStateBtn')?.addEventListener('click', () => loadState(true));
   $('#refreshTasksBtn')?.addEventListener('click', () => loadTasks());
   $('#refreshGalleryBtn')?.addEventListener('click', () => loadGallery(true));
@@ -2150,6 +2396,49 @@ function bindEvents() {
     if (index === undefined) return;
     appState.uploads.splice(Number(index), 1);
     renderUploads();
+  });
+  $('#novelaiMaskInput')?.addEventListener('change', (event) => uploadReferences(Array.from(event.target.files || []), 'mask'));
+  $('#novelaiCharacterInput')?.addEventListener('change', (event) => uploadReferences(Array.from(event.target.files || []), 'character'));
+  $('#novelaiMaskList')?.addEventListener('click', (event) => {
+    if (event.target?.dataset?.novelaiMaskRemove === undefined) return;
+    appState.novelaiMask = null;
+    renderUploads();
+  });
+  $('#novelaiCharacterList')?.addEventListener('click', (event) => {
+    const index = event.target?.dataset?.novelaiReferenceRemove;
+    if (index === undefined) return;
+    appState.novelaiReferences.splice(Number(index), 1);
+    renderUploads();
+  });
+  $('#novelaiCharacterList')?.addEventListener('change', (event) => {
+    const { novelaiReferenceIndex: index, novelaiReferenceKey: key } = event.target?.dataset || {};
+    const item = appState.novelaiReferences[Number(index)];
+    if (!item || !['type', 'strength', 'fidelity'].includes(key)) return;
+    item[key] = key === 'type' ? event.target.value : Number(event.target.value);
+  });
+  $('#novelaiVibeFileInput')?.addEventListener('change', async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      await importNovelaiVibeFile(file);
+    } catch (error) {
+      showToast(error.message || t('error.generic'), true);
+    } finally {
+      event.target.value = '';
+    }
+  });
+  $('#novelaiVibeVariantSelect')?.addEventListener('change', (event) => {
+    const entry = appState.novelaiVibeImport?.variants[Number(event.target.value)];
+    if (event.target.value === '' || !entry) {
+      $('#novelaiVibeInput').value = '';
+      return;
+    }
+    const {key: _key, ...reference} = entry;
+    $('#novelaiVibeInput').value = JSON.stringify([reference], null, 2);
+  });
+  $('#novelaiVibeInput')?.addEventListener('input', () => {
+    appState.novelaiVibeImport = null;
+    if ($('#novelaiVibeVariantField')) $('#novelaiVibeVariantField').hidden = true;
   });
   $('#auditTestImageInput')?.addEventListener('change', (event) =>
     uploadAuditImages(Array.from(event.target.files || [])),
@@ -2287,6 +2576,7 @@ async function refreshLocalizedUi() {
   await loadStrings();
   applyStaticText();
   renderState();
+  renderUploads();
   renderTaskList();
   if (appState.currentView === 'tasks' && appState.selectedTask) {
     renderDetail(appState.selectedTask);

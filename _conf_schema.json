@@ -177,6 +177,22 @@
             },
             "default": 0
           },
+          "negative_prompt": {
+            "description": "默认反向提示词",
+            "hint": "每次可通过 WebUI 或 LLM 生图工具的 negative_prompt 覆盖；未传或 null 继承，空字符串清空本次。",
+            "type": "text",
+            "default": ""
+          },
+          "negative_prompt_mode": {
+            "description": "反向提示词发送方式",
+            "hint": "prompt（默认）：合并到同一次请求的提示词，作为语义约束，适用于 GPT Image、Z-Image-Turbo 等没有独立负向通道的模型。parameter：通过独立 negative_prompt 字段透传，仅用于明确支持该扩展的兼容服务。",
+            "type": "string",
+            "options": [
+              "prompt",
+              "parameter"
+            ],
+            "default": "prompt"
+          },
           "prompt_prefix": {
             "description": "提示词前缀",
             "hint": "发送到 Chat Completions 的文本前缀；留空则直接发送用户提示词。",
@@ -194,7 +210,7 @@
           },
           "extra_body_json": {
             "description": "额外请求体 JSON",
-            "hint": "可选。填写 JSON 对象，会合并到 Chat Completions 请求体顶层。",
+            "hint": "可选。填写 JSON 对象，会合并到 Chat Completions 请求体顶层。使用本次反向词（含空字符串）或非空默认反向词时，本次成组输入优先于其中的 messages 和 negative_prompt。",
             "type": "string",
             "editor_mode": true,
             "editor_language": "json",
@@ -282,6 +298,22 @@
             },
             "default": 0
           },
+          "negative_prompt": {
+            "description": "默认反向提示词",
+            "hint": "每次可通过 WebUI 或 LLM 生图工具的 negative_prompt 覆盖；未传或 null 继承，空字符串清空本次。",
+            "type": "text",
+            "default": ""
+          },
+          "negative_prompt_mode": {
+            "description": "反向提示词发送方式",
+            "hint": "prompt（默认）：合并到同一次请求的提示词，作为语义约束，适用于 GPT Image、Z-Image-Turbo 等没有独立负向通道的模型。parameter：通过独立 negative_prompt 字段透传，仅用于明确支持该扩展的兼容服务。",
+            "type": "string",
+            "options": [
+              "prompt",
+              "parameter"
+            ],
+            "default": "prompt"
+          },
           "model_family": {
             "description": "模型系列",
             "hint": "影响 OpenAI 请求格式。auto 会按模型名自动识别 gpt-image 或 dall-e 系列。",
@@ -314,7 +346,7 @@
       },
       "novelai": {
         "name": "NovelAI 原生 JSON 接口",
-        "hint": "使用 NovelAI 原生请求结构，先报价再生成。聊天指令与 LLM 工具仅使用四种标准尺寸；WebUI 可手动填写宽高，仍受单次请求 Gems 上限保护。支持文生图与单参考图图生图，返回 JSON Base64 图片。",
+        "hint": "使用 NovelAI 原生请求结构，先报价再生成。支持本次采样参数、多角色、单源图图生图、蒙版重绘、精确参考和 Vibe；高级能力以模型支持为准。默认匹配标准尺寸，也可显式填写宽高，均受单次请求 Gems 上限保护。返回 JSON Base64 图片。",
         "display_item": "name",
         "hide_hint_in_list": true,
         "items": {
@@ -353,7 +385,7 @@
           },
           "capability_options": {
             "description": "模型能力",
-            "hint": "支持文生图、单参考图图生图和宽高比。聊天/LLM 将比例匹配到 512×512、832×1216、1216×832、1024×1024；WebUI 可手动填写宽高。全局分辨率不生效；标准尺寸不保证图生图或高步数免费。",
+            "hint": "支持文生图、单源图图生图和宽高比；蒙版和精确参考有独立输入。未指定像素尺寸时匹配 512×512、832×1216、1216×832、1024×1024；WebUI 与本次 novelai 参数可手动指定宽高。全局分辨率不生效；标准尺寸不保证图生图或高步数免费。",
             "type": "list",
             "options": [
               "文生图",
@@ -452,7 +484,7 @@
           },
           "negative_prompt": {
             "description": "负向提示词",
-            "hint": "可选，用于描述希望避免的内容；V4 / V4.5 的负向提示词结构会自动组装，不自动追加质量标签或 UC 预设。",
+            "hint": "默认负向提示词，可在 WebUI、LLM 工具或公共 API 中按本次任务覆盖或清空。V4 / V4.5 的负向提示词结构会自动组装，不自动追加质量标签或 UC 预设。",
             "type": "text",
             "default": ""
           },
@@ -716,7 +748,7 @@
           },
           "negative_prompt": {
             "description": "反向提示词",
-            "hint": "可选；填写后随请求发送为 negative_prompt。",
+            "hint": "默认反向提示词；填写后随请求发送为 negative_prompt。可在 WebUI、LLM 工具或公共 API 中按本次任务覆盖或清空，实际效果取决于上游模型。",
             "type": "string",
             "default": ""
           },
@@ -1199,7 +1231,7 @@
           },
           "negative_prompt": {
             "description": "反向提示词",
-            "hint": "可选。发送到支持 negative_prompt 的 ModelScope 图像模型。",
+            "hint": "默认反向提示词，发送到支持 negative_prompt 的 ModelScope 图像模型。可在 WebUI、LLM 工具或公共 API 中按本次任务覆盖或清空。",
             "type": "text",
             "default": ""
           },

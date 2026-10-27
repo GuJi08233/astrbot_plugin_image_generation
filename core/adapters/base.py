@@ -22,8 +22,8 @@ from ..shared.logging import (
     mask_sensitive,
     safe_log_error_body,
     safe_log_text,
-    safe_user_error_detail,
     safe_log_url,
+    safe_user_error_detail,
 )
 from ..shared.types import (
     AdapterConfig,
@@ -83,6 +83,48 @@ class BaseImageAdapter(abc.ABC):
             if self.config.capability_options.get(key, False):
                 result |= capability_flag
         return result
+
+    def _resolve_prompt_pair(
+        self, request: GenerationRequest
+    ) -> tuple[str, str | None]:
+        """Resolve positive and negative instructions for one compatible API call.
+
+        Args:
+            request: Original paired prompts. None inherits the provider's negative
+                prompt; an explicit empty string clears it for this request.
+
+        Returns:
+            The outgoing prompt and an optional independent negative_prompt field.
+            Prompt mode includes nonempty negative instructions in the same prompt;
+            parameter mode preserves the positive prompt and sends a separate field.
+
+        Raises:
+            ValueError: A negative prompt or delivery mode is invalid.
+        """
+        negative_prompt = request.negative_prompt
+        if negative_prompt is None:
+            negative_prompt = self.config.extra.get("negative_prompt")
+        if negative_prompt is None:
+            negative_prompt = ""
+        if not isinstance(negative_prompt, str):
+            raise ValueError("negative_prompt must be a string or None")
+
+        mode = self.config.extra.get("negative_prompt_mode") or "prompt"
+        if mode == "parameter":
+            return request.prompt, (
+                negative_prompt
+                if negative_prompt.strip() or request.negative_prompt is not None
+                else None
+            )
+        if mode != "prompt":
+            raise ValueError("negative_prompt_mode must be prompt or parameter")
+        if not negative_prompt.strip():
+            return request.prompt, None
+        return (
+            f"[Content to generate]\n{request.prompt}\n\n"
+            f"[Content to avoid]\n{negative_prompt}",
+            None,
+        )
 
     async def close(self) -> None:
         """Close the underlying HTTP session."""

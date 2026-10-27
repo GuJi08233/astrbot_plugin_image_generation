@@ -23,7 +23,7 @@ class OpenAIChatAdapter(BaseImageAdapter):
 
     def get_capabilities(self) -> ImageCapability:
         """Return adapter capabilities."""
-        return self._get_configured_capabilities()
+        return self._get_configured_capabilities() | ImageCapability.NEGATIVE_PROMPT
 
     # generate() is provided by the base class via the template method pattern.
 
@@ -55,8 +55,9 @@ class OpenAIChatAdapter(BaseImageAdapter):
 
     def _build_payload(self, request: GenerationRequest) -> dict:
         """Build the request payload."""
+        prompt, negative_prompt = self._resolve_prompt_pair(request)
         message_content: list[dict] = [
-            {"type": "text", "text": self._build_prompt_text(request.prompt)}
+            {"type": "text", "text": self._build_prompt_text(prompt)}
         ]
 
         for image in request.images:
@@ -77,7 +78,17 @@ class OpenAIChatAdapter(BaseImageAdapter):
         if modalities := self._get_modalities():
             payload["modalities"] = modalities
 
-        payload.update(self._get_extra_body())
+        extra_body = self._get_extra_body()
+        if (
+            request.negative_prompt is not None
+            or str(self.config.extra.get("negative_prompt") or "").strip()
+        ):
+            # A request-scoped prompt pair takes precedence over legacy templates.
+            extra_body.pop("negative_prompt", None)
+            extra_body.pop("messages", None)
+        payload.update(extra_body)
+        if negative_prompt is not None:
+            payload["negative_prompt"] = negative_prompt
 
         return payload
 

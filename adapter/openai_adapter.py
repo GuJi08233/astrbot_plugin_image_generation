@@ -21,7 +21,7 @@ class OpenAIAdapter(BaseImageAdapter):
 
     def get_capabilities(self) -> ImageCapability:
         """Return adapter capabilities."""
-        return self._get_configured_capabilities()
+        return self._get_configured_capabilities() | ImageCapability.NEGATIVE_PROMPT
 
     def _is_gpt_image_model(self) -> bool:
         """Return whether the active model is a GPT Image model."""
@@ -65,8 +65,11 @@ class OpenAIAdapter(BaseImageAdapter):
         if use_edit:
             url = f"{base}/v1/images/edits"
             form = aiohttp.FormData()
+            prompt, negative_prompt = self._resolve_prompt_pair(request)
             form.add_field("model", self.model or "gpt-image-1")
-            form.add_field("prompt", request.prompt)
+            form.add_field("prompt", prompt)
+            if negative_prompt is not None:
+                form.add_field("negative_prompt", negative_prompt)
             form.add_field("n", "1")
             if size := self._map_aspect_ratio_to_size(
                 request.aspect_ratio, gpt_model=True
@@ -216,11 +219,14 @@ class OpenAIAdapter(BaseImageAdapter):
     def _build_payload(self, request: GenerationRequest) -> dict:
         """Build the request payload."""
         gpt = self._is_gpt_image_model()
+        prompt, negative_prompt = self._resolve_prompt_pair(request)
         payload: dict[str, Any] = {
             "model": self.model or "dall-e-3",
-            "prompt": request.prompt,
+            "prompt": prompt,
             "n": 1,
         }
+        if negative_prompt is not None:
+            payload["negative_prompt"] = negative_prompt
 
         if size := self._map_aspect_ratio_to_size(request.aspect_ratio, gpt_model=gpt):
             payload["size"] = size

@@ -156,6 +156,33 @@ class NovelAIAdapterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(headers["Content-Type"], "application/json")
         self.assertTrue(headers["Idempotency-Key"])
 
+    async def test_request_negative_prompt_matches_quote_and_generation(self):
+        self.adapter.config.extra["negative_prompt"] = "provider default"
+        for override, expected in (
+            (None, "provider default"),
+            ("request override", "request override"),
+            ("", ""),
+        ):
+            with self.subTest(override=override):
+                result = await self.adapter.generate(
+                    self.GenerationRequest(prompt="1girl", negative_prompt=override)
+                )
+
+                self.assertIsNone(result.error)
+                quote = self.quote_post.call_args.kwargs["json"]
+                generation = self.generation_post.call_args.kwargs["json"]
+                self.assertEqual(quote, generation)
+                self.assertEqual(generation["parameters"]["negative_prompt"], expected)
+                self.assertEqual(
+                    generation["parameters"]["v4_negative_prompt"]["caption"][
+                        "base_caption"
+                    ],
+                    expected,
+                )
+                self.assertEqual(
+                    self.adapter.config.extra["negative_prompt"], "provider default"
+                )
+
     async def test_image_to_image_encodes_reference_and_native_parameters(self):
         self.adapter.config.extra.update(
             {"img2img_strength": 0.55, "img2img_noise": 0.15, "seed": 12345}

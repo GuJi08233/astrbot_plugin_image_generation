@@ -49,7 +49,7 @@ class SiliconFlowAdapter(BaseImageAdapter):
 
     def get_capabilities(self) -> ImageCapability:
         """Return adapter capabilities."""
-        return self._get_configured_capabilities()
+        return self._get_configured_capabilities() | ImageCapability.NEGATIVE_PROMPT
 
     async def _generate_once(
         self, request: GenerationRequest
@@ -101,6 +101,12 @@ class SiliconFlowAdapter(BaseImageAdapter):
             "model": self._model_name(),
             "prompt": request.prompt,
         }
+        if request.negative_prompt is not None:
+            payload["negative_prompt"] = request.negative_prompt
+        elif negative_prompt := str(
+            self.config.extra.get("negative_prompt") or ""
+        ).strip():
+            payload["negative_prompt"] = negative_prompt
 
         self._add_extra_options(payload)
 
@@ -117,9 +123,6 @@ class SiliconFlowAdapter(BaseImageAdapter):
     def _add_extra_options(self, payload: dict[str, Any]) -> None:
         """Add optional SiliconFlow generation parameters."""
         extra = self.config.extra
-
-        if negative_prompt := str(extra.get("negative_prompt") or "").strip():
-            payload["negative_prompt"] = negative_prompt
 
         steps = self._coerce_int(
             extra.get("num_inference_steps"), min_value=1, max_value=100

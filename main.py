@@ -348,8 +348,19 @@ class ImageGenerationPlugin(Star):
         source_event: AstrMessageEvent | None = None,
         auto_send: bool = True,
         image_size: tuple[int, int] | None = None,
+        negative_prompt: str | None = None,
+        novelai: dict[str, Any] | None = None,
     ) -> GenerationTaskRecord:
-        """Create and track an image generation task in the unified task manager."""
+        """Create and track an image generation task in the unified task manager.
+
+        Args:
+            negative_prompt: Per-task override. None inherits the provider default;
+                an empty string clears it for this task.
+            novelai: Optional structured NovelAI controls and prepared assets.
+
+        Returns:
+            The queued generation task record.
+        """
         if preset is None:
             preset, preset_label = format_template_summary(
                 presets or [],
@@ -370,6 +381,8 @@ class ImageGenerationPlugin(Star):
                 deliver_via_ai=source == "LLM工具",
                 auto_send=auto_send,
                 image_size=image_size,
+                negative_prompt=negative_prompt,
+                novelai=novelai,
             )
 
         try:

@@ -16,12 +16,23 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 import aiohttp
-from PIL import Image, ImageOps
+from PIL import Image, ImageChops, ImageOps
 
 from ..core.adapters.base import BaseImageAdapter
+from ..core.generation.novelai_options import (
+    NOVELAI_BOOLEAN_OPTIONS,
+    NOVELAI_NOISE_SCHEDULES,
+    NOVELAI_SAMPLERS,
+    validate_novelai_options,
+)
 from ..core.shared.constants import UNSPECIFIED_OPTION
 from ..core.shared.logging import safe_log_error_body
-from ..core.shared.types import GenerationRequest, GenerationResult, ImageCapability
+from ..core.shared.types import (
+    GenerationRequest,
+    GenerationResult,
+    ImageCapability,
+    ImageData,
+)
 
 RESPONSE_ERROR = "NovelAI response invalid; generation may have completed"
 TRANSPORT_ERROR = "NovelAI transport error"
@@ -40,12 +51,19 @@ class NovelAIAdapter(BaseImageAdapter):
         """Return supported capabilities selected in the provider configuration.
 
         Returns:
-            Configured text, reference-image, and aspect-ratio capabilities.
+            Configured image capabilities and per-request negative prompts.
         """
-        return self._get_configured_capabilities() & (
-            ImageCapability.TEXT_TO_IMAGE
-            | ImageCapability.IMAGE_TO_IMAGE
-            | ImageCapability.ASPECT_RATIO
+        return (
+            (
+                self._get_configured_capabilities()
+                & (
+                    ImageCapability.TEXT_TO_IMAGE
+                    | ImageCapability.IMAGE_TO_IMAGE
+                    | ImageCapability.ASPECT_RATIO
+                )
+            )
+            | ImageCapability.NEGATIVE_PROMPT
+            | ImageCapability.NOVELAI_OPTIONS
         )
 
     async def generate(self, request: GenerationRequest) -> GenerationResult:
@@ -278,11 +296,33 @@ class NovelAIAdapter(BaseImageAdapter):
         Raises:
             ValueError: A parameter or source image is unsupported or invalid.
         """
-        if len(request.images) > 1:
-            raise ValueError("NovelAI img2img supports exactly one reference image")
+        options = validate_novelai_options(request.novelai) or {}
+        settings = dict(self.config.extra)
+        settings.update(options)
         model = (self.model or self.DEFAULT_MODEL).strip()
-        if request.images and model.startswith("nai-diffusion-5"):
+        is_v5 = model.startswith("nai-diffusion-5")
+        is_v4 = model.startswith(("nai-diffusion-4", "nai-diffusion-5"))
+        action = options.get("action") or (
+            "infill"
+            if "inpaint" in options
+            else "img2img"
+            if "i2i" in options or request.images
+            else "generate"
+        )
+        if action != "generate" and not (
+            self.get_capabilities() & ImageCapability.IMAGE_TO_IMAGE
+        ):
+            raise ValueError("NovelAI image-to-image capability is disabled")
+        source_options = options.get("inpaint" if action == "infill" else "i2i", {})
+        source_image = source_options.get("image")
+        if action != "generate" and source_image is None:
+            if len(request.images) != 1:
+                raise ValueError("NovelAI img2img requires exactly one source image")
+            source_image = request.images[0]
+        if is_v5 and action != "generate":
             raise ValueError("NAI Diffusion 5 currently supports text-to-image only")
+        if model.endswith("-inpainting") and action != "infill":
+            raise ValueError("Inpainting models require action infill and a mask")
         if request.image_size is not None and (
             not isinstance(request.image_size, (tuple, list))
             or len(request.image_size) != 2
@@ -292,6 +332,11 @@ class NovelAIAdapter(BaseImageAdapter):
             )
         ):
             raise ValueError("Manual image size must contain two integer dimensions")
+        if request.image_size is not None and any(
+            key in options and options[key] != request.image_size[index]
+            for index, key in enumerate(("width", "height"))
+        ):
+            raise ValueError("NovelAI width/height conflict with image_size")
 
         parameters: dict[str, Any] = {}
         integer_fields = (
@@ -304,7 +349,7 @@ class NovelAIAdapter(BaseImageAdapter):
             if request.image_size is not None and key in {"width", "height"}:
                 raw = request.image_size[0 if key == "width" else 1]
             else:
-                raw = self.config.extra.get(key, default)
+                raw = settings.get(key, default)
             value = float(raw)
             if (
                 isinstance(raw, bool)
@@ -319,7 +364,7 @@ class NovelAIAdapter(BaseImageAdapter):
             ("scale", 5.0, 10),
             ("cfg_rescale", 0.0, 1),
         ):
-            raw = self.config.extra.get(key, default)
+            raw = settings.get(key, default)
             value = float(raw)
             if (
                 isinstance(raw, bool)
@@ -332,7 +377,7 @@ class NovelAIAdapter(BaseImageAdapter):
         width, height = parameters["width"], parameters["height"]
         if width % 64 or height % 64 or width * height > 3_145_728:
             raise ValueError("Dimensions must be multiples of 64 with area <= 3145728")
-        if request.image_size is None:
+        if request.image_size is None and "width" not in options:
             ratio = request.aspect_ratio
             target_ratio = width / height
             if ratio and ratio != UNSPECIFIED_OPTION:
@@ -359,12 +404,35 @@ class NovelAIAdapter(BaseImageAdapter):
             if parameters["seed"] == -1
             else parameters["seed"],
             n_samples=1,
-            sampler=str(self.config.extra.get("sampler", "k_euler_ancestral")),
-            noise_schedule=str(self.config.extra.get("noise_schedule", "karras")),
-            negative_prompt=str(self.config.extra.get("negative_prompt", "")),
-            params_version=3,
+            sampler=str(settings.get("sampler", "k_euler_ancestral")),
+            noise_schedule=str(settings.get("noise_schedule", "karras")),
+            negative_prompt=(
+                request.negative_prompt
+                if request.negative_prompt is not None
+                else str(self.config.extra.get("negative_prompt", ""))
+            ),
+            params_version=4 if is_v5 else 3,
         )
-        if model.startswith(("nai-diffusion-4", "nai-diffusion-5")):
+        if parameters["sampler"] not in NOVELAI_SAMPLERS:
+            raise ValueError("Unsupported NovelAI sampler")
+        if parameters["noise_schedule"] not in NOVELAI_NOISE_SCHEDULES:
+            raise ValueError("Unsupported NovelAI noise schedule")
+        if is_v5 and (
+            (width, height) not in self.STANDARD_SIZES
+            or parameters["steps"] > 28
+            or any(settings.get(key) for key in ("sm", "sm_dyn", "autoSmea"))
+            or options.get("character_references")
+            or options.get("vibe_references")
+        ):
+            raise ValueError(
+                "NAI Diffusion 5 only supports free standard text-to-image renders"
+            )
+        if not is_v5 and any(
+            settings.get(key)
+            for key in ("straight_alpha", "tag_hint_transparent_background")
+        ):
+            raise ValueError("Transparency options require NAI Diffusion 5")
+        if is_v4:
             parameters.update(
                 legacy_v3_extend=False,
                 legacy_uc=False,
@@ -382,12 +450,76 @@ class NovelAIAdapter(BaseImageAdapter):
                     "legacy_uc": False,
                 },
             )
-        if request.images:
+        for key in NOVELAI_BOOLEAN_OPTIONS - {"variety_boost"}:
+            if key in settings:
+                if not isinstance(settings[key], bool):
+                    raise ValueError(f"{key} must be a boolean")
+                parameters[key] = settings[key]
+        for key in ("skip_cfg_above_sigma", "controlnet_strength"):
+            if key in options:
+                parameters[key] = options[key]
+        if "skip_cfg_above_sigma" not in options and settings.get("variety_boost"):
+            parameters["skip_cfg_above_sigma"] = 58
+        if is_v4:
+            parameters["v4_negative_prompt"]["legacy_uc"] = parameters["legacy_uc"]
+        characters = options.get("characters", [])
+        if characters and not is_v4:
+            raise ValueError("Character prompts require NAI Diffusion 4 or newer")
+        if characters:
+            use_coords = any(
+                character.get("enabled", True) and character.get("position") is not None
+                for character in characters
+            )
+            parameters["use_coords"] = use_coords
+            parameters["v4_prompt"]["use_coords"] = use_coords
+            parameters["characterPrompts"] = []
+            for character in characters:
+                position = character.get("position") or (0.5, 0.5)
+                if isinstance(position, str):
+                    position = (
+                        (ord(position[0]) - ord("A")) * 0.2 + 0.1,
+                        (int(position[1]) - 1) * 0.2 + 0.1,
+                    )
+                if not is_v5:
+                    position = tuple(
+                        (min(4, int(coordinate * 5)) * 0.2 + 0.1)
+                        for coordinate in position
+                    )
+                center = {"x": round(position[0], 6), "y": round(position[1], 6)}
+                enabled = character.get("enabled", True)
+                positive, negative = (
+                    character["prompt"],
+                    character.get("negative_prompt", ""),
+                )
+                parameters["characterPrompts"].append(
+                    {
+                        "prompt": positive,
+                        "uc": negative,
+                        "center": center,
+                        "enabled": enabled,
+                    }
+                )
+                if enabled:
+                    for key, caption in (
+                        ("v4_prompt", positive),
+                        ("v4_negative_prompt", negative),
+                    ):
+                        parameters[key]["caption"]["char_captions"].append(
+                            {"char_caption": caption, "centers": [dict(center)]}
+                        )
+        if action != "generate":
             for config_key, key, default in (
-                ("img2img_strength", "strength", 0.7),
+                ("img2img_strength", "strength", 1.0 if action == "infill" else 0.7),
                 ("img2img_noise", "noise", 0.0),
             ):
-                raw = self.config.extra.get(config_key, default)
+                if action == "infill" and key == "noise":
+                    continue
+                raw = source_options.get(
+                    key,
+                    default
+                    if action == "infill"
+                    else settings.get(config_key, default),
+                )
                 value = float(raw)
                 if (
                     isinstance(raw, bool)
@@ -396,30 +528,169 @@ class NovelAIAdapter(BaseImageAdapter):
                 ):
                     raise ValueError(f"{config_key} must be between 0 and 1")
                 parameters[key] = value
-            try:
-                with Image.open(BytesIO(request.images[0].data)) as source:
-                    source = ImageOps.exif_transpose(source).convert("RGB")
-                    source = ImageOps.pad(
-                        source, (width, height), Image.Resampling.LANCZOS, color="white"
-                    )
-                    output = BytesIO()
-                    source.save(output, format="PNG")
-                    parameters["image"] = base64.b64encode(output.getvalue()).decode(
-                        "ascii"
-                    )
-            except (
-                OSError,
-                ValueError,
-                SyntaxError,
-                Image.DecompressionBombError,
-            ) as exc:
-                raise ValueError("Reference image cannot be decoded") from exc
-        return {
+            parameters["image"], source_size = self._encode_reference_image(
+                source_image, target_size=(width, height)
+            )
+            if "seed" in source_options:
+                parameters["extra_noise_seed"] = (
+                    secrets.randbits(32)
+                    if source_options["seed"] == -1
+                    else source_options["seed"]
+                )
+            if action == "infill":
+                parameters["mask"], _ = self._encode_reference_image(
+                    source_options["mask"],
+                    target_size=(width, height),
+                    mask=True,
+                    source_size=source_size,
+                )
+                parameters["inpaintImg2ImgStrength"] = parameters["strength"]
+                parameters["strength"] = 0.7
+                color_correct = source_options.get("color_correct", True)
+                parameters["color_correct"] = color_correct
+                parameters["img2img"] = {
+                    "color_correct": color_correct,
+                    "strength": parameters["inpaintImg2ImgStrength"],
+                }
+                parameters["add_original_image"] = False
+                if not model.endswith("-inpainting"):
+                    model += "-inpainting"
+        references = options.get("character_references", [])
+        if references:
+            if not model.startswith("nai-diffusion-4-5"):
+                raise ValueError("Precise Reference requires a supported NAI4.5 model")
+            for key in (
+                "images",
+                "descriptions",
+                "strength_values",
+                "secondary_strength_values",
+                "information_extracted",
+            ):
+                parameters[f"director_reference_{key}"] = []
+            for reference in references:
+                encoded, _ = self._encode_reference_image(
+                    reference["image"], target_size=(1024, 1536), black_padding=True
+                )
+                parameters["director_reference_images"].append(encoded)
+                parameters["director_reference_descriptions"].append(
+                    {
+                        "caption": {
+                            "base_caption": reference.get("type", "character&style"),
+                            "char_captions": [],
+                        },
+                        "legacy_uc": False,
+                    }
+                )
+                parameters["director_reference_strength_values"].append(
+                    reference.get("strength", 1.0)
+                )
+                parameters["director_reference_secondary_strength_values"].append(
+                    round(1 - reference.get("fidelity", 1.0), 6)
+                )
+                parameters["director_reference_information_extracted"].append(1.0)
+        vibes = options.get("vibe_references", [])
+        if vibes:
+            parameters["reference_image_multiple"] = []
+            parameters["reference_strength_multiple"] = []
+            parameters["reference_information_extracted_multiple"] = []
+            parameters.setdefault("normalize_reference_strength_multiple", False)
+            parameters.setdefault("controlnet_strength", 1.0)
+            for vibe in vibes:
+                if "encoding" in vibe:
+                    encoded = vibe["encoding"]
+                else:
+                    if not model.startswith("nai-diffusion-3"):
+                        raise ValueError(
+                            "V4 Vibe requires pre-encoded Vibe data; automatic paid encoding is not performed"
+                        )
+                    encoded, _ = self._encode_reference_image(vibe["image"])
+                parameters["reference_image_multiple"].append(encoded)
+                parameters["reference_strength_multiple"].append(
+                    vibe.get("strength", 0.6)
+                )
+                parameters["reference_information_extracted_multiple"].append(
+                    vibe.get("information_extracted", 1.0)
+                )
+        payload = {
             "input": request.prompt,
             "model": model,
-            "action": "img2img" if request.images else "generate",
+            "action": action,
             "parameters": parameters,
         }
+        if (
+            len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+            > 256 * 1024 * 1024
+        ):
+            raise ValueError("NovelAI JSON request exceeds the 256 MiB limit")
+        return payload
+
+    def _encode_reference_image(
+        self,
+        image: ImageData,
+        *,
+        target_size: tuple[int, int] | None = None,
+        mask: bool = False,
+        source_size: tuple[int, int] | None = None,
+        black_padding: bool = False,
+    ) -> tuple[str, tuple[int, int]]:
+        """Encode a bounded source, mask, or director reference consistently.
+
+        Args:
+            image: Image bytes already resolved through the shared image loader.
+            target_size: Optional output dimensions for a shared padding transform.
+            mask: Whether to preserve a binary mask with black padding.
+            source_size: Original source dimensions that a mask must match.
+            black_padding: Whether a director reference uses black padding.
+
+        Returns:
+            PNG Base64 and the oriented source dimensions before resizing.
+
+        Raises:
+            ValueError: The image is unresolved, invalid, oversized, or misaligned.
+        """
+        if not isinstance(image, ImageData):
+            raise ValueError(
+                "NovelAI images must be resolved before payload construction"
+            )
+        if len(image.data) > 32 * 1024 * 1024:
+            raise ValueError("NovelAI source images must not exceed 32 MiB")
+        try:
+            with Image.open(BytesIO(image.data)) as original:
+                if max(original.size) > 4096:
+                    raise ValueError(
+                        "NovelAI source image dimensions must not exceed 4096"
+                    )
+                original = ImageOps.exif_transpose(original)
+                original_size = original.size
+                if source_size is not None and original_size != source_size:
+                    raise ValueError(
+                        "Inpaint mask dimensions must match the source image"
+                    )
+                if mask:
+                    prepared = original.convert("L")
+                    if "A" in original.getbands():
+                        prepared = ImageChops.multiply(
+                            prepared, original.getchannel("A")
+                        )
+                    prepared = prepared.point(lambda value: 255 if value > 127 else 0)
+                else:
+                    prepared = original.convert("RGB")
+                if target_size is not None:
+                    prepared = ImageOps.pad(
+                        prepared,
+                        target_size,
+                        Image.Resampling.NEAREST if mask else Image.Resampling.LANCZOS,
+                        color=0 if mask or black_padding else "white",
+                    )
+                if mask:
+                    prepared = prepared.convert("RGBA")
+                output = BytesIO()
+                prepared.save(output, format="PNG")
+                return base64.b64encode(output.getvalue()).decode(
+                    "ascii"
+                ), original_size
+        except (OSError, SyntaxError, Image.DecompressionBombError) as exc:
+            raise ValueError("Reference image cannot be decoded") from exc
 
     def _extract_images(self, data: Any) -> tuple[list[bytes] | None, str | None]:
         """Validate a complete JSON generation result before returning images.

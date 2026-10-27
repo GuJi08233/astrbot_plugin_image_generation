@@ -51,6 +51,8 @@ api = image_plugin.public_api
 async def submit_generation_task(
     *,
     prompt: str = "",
+    negative_prompt: str | None = None,
+    novelai: dict[str, Any] | None = None,
     unified_msg_origin: str | None = None,
     source: str = "公共接口",
     image_count: int | None = None,
@@ -70,6 +72,8 @@ async def submit_generation_task(
 | 参数 | 说明 |
 | :--- | :--- |
 | `prompt` | 额外提示词。默认不会从正文匹配模板名称；开启插件“提示词正文匹配”后才会扫描勾选的预设/人设。若 `presets` 或 `personas` 能生成有效提示词，可为空。 |
+| `negative_prompt` | 与 `prompt` 共同组成本次任务的反向要求。省略或 `None` 继承供应商默认值；字符串完全覆盖默认值；`""` 清空本次反向词。NovelAI、硅基流动、ModelScope、OpenAI Images、OpenAI Chat 兼容适配器支持。OpenAI 兼容适配器按供应商 `negative_prompt_mode` 决定合入同次请求的提示词，或作为独立扩展字段发送；实际效果取决于上游模型。不支持的适配器显式传入字符串（包括空串），或传入非字符串、非 `None` 值时，在审核与预约用量前返回 `rejected`。不会修改供应商配置或其他任务。 |
+| `novelai` | 仅 NovelAI 适配器支持的本次专属参数对象，省略或 `None` 保留默认行为。包括采样参数、多角色、图生图、蒙版重绘、精确参考和 Vibe，详见 [NovelAI 专属参数](novelai.md#本次请求专属参数)。图片字段接受 HTTP(S) URL、允许目录中的路径或已验证的 `ImageData`；每类素材保持角色和顺序，不与普通源图合并去重。非法类型、字段和参数范围在审核与预约用量之前拒绝；素材无法读取时取消提交并释放已预约用量。 |
 | `unified_msg_origin` | 可选会话作用域。传入后按该会话检查并扣减额度。 |
 | `source` | 任务来源，仅用于日志和任务记录，建议填调用方插件名。 |
 | `image_count` | 生成数量；不传使用插件默认值，超过插件配置上限会被截断。 |
@@ -87,6 +91,9 @@ async def submit_generation_task(
 - 最终提示词按 `presets` → `personas` → `prompt` 顺序拼接。
 - 插件默认不扫描 `prompt` 正文中的模板名称；开启“提示词正文匹配”后才会按勾选项补匹配。
 - 预设可以覆盖 `aspect_ratio` 和 `resolution`。
+- `negative_prompt` 独立于正向提示词与预设；不会从正向提示词正文自动拆分，也不会与供应商默认反向词拼接。
+- `prompt` 与 `negative_prompt` 原样传入同一个生成任务；发送格式由适配器决定。OpenAI 兼容供应商默认 `negative_prompt_mode="prompt"`，在同次请求的提示词内表达正向和反向要求；设为 `"parameter"` 时才透传独立负向字段。图生图与文生图使用相同规则，详见 [提示词说明](../README.md#本次反向提示词)。
+- NovelAI 多角色的启用角色正向词参与提示词审核，但不会被拼接到提交给模型的场景正向词中；其负向词与位置通过原生角色结构传递。
 - NovelAI 未传 `image_size` 时，只从 `512×512`、`832×1216`、`1216×832`、`1024×1024` 选择最接近请求比例的尺寸；未指定比例时使用供应商默认宽高的比例，同一比例再按供应商默认面积选择。默认供应商尺寸下，`3:4`、`4:3`、`1:1` 分别匹配 `832×1216`、`1216×832`、`1024×1024`。
 - NovelAI 显式 `image_size` 可使用标准列表外的合法尺寸，优先于预设比例；文生图、图生图和手动尺寸都要通过供应商 `max_cost_gems` 报价检查，超限或报价失败不生成。标准尺寸不保证高步数或图生图免费，报价限制按子请求独立生效。
 - 其他适配器显式传 `image_size` 时，在审核与预约用量之前返回 `rejected`，不会创建生图任务。
@@ -243,6 +250,8 @@ else:
 async def generate_image_files(
     *,
     prompt: str = "",
+    negative_prompt: str | None = None,
+    novelai: dict[str, Any] | None = None,
     unified_msg_origin: str | None = None,
     source: str = "公共接口",
     image_count: int | None = None,
