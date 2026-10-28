@@ -304,13 +304,28 @@ def safe_log_summary(
     return safe_log_text(text, limit=limit)
 
 
-def safe_log_error_body(value: object, limit: int = 200) -> str:
+def safe_log_error_body(
+    value: object,
+    limit: int = 200,
+    *,
+    field_limit: int | None = None,
+) -> str:
     """Return a compact provider error body summary for logs.
 
     The plugin keeps provider error bodies readable for administrators, but still
     removes values that are almost always secrets or binary payloads.
+
+    Args:
+        value: Raw provider body or exception text.
+        limit: Maximum length of the final summary.
+        field_limit: Maximum length of one scalar field; defaults to a
+            log-friendly cap and can be widened for user-facing surfaces.
     """
-    return safe_log_summary(value, limit=limit, field_limit=min(120, limit))
+    return safe_log_summary(
+        value,
+        limit=limit,
+        field_limit=field_limit if field_limit is not None else min(120, limit),
+    )
 
 
 def safe_user_error_detail(value: object, limit: int = 600) -> str:
@@ -353,8 +368,11 @@ def safe_log_url(value: object, limit: int = 80) -> str:
     if not text:
         return ""
 
-    if text.startswith("data:"):
+    lowered = text.lower()
+    if lowered.startswith("data:"):
         return f"data-url({len(text)} chars)"
+    if lowered.startswith("base64://"):
+        return f"base64-url({len(text)} chars)"
 
     parsed = urlparse(text)
     if parsed.scheme in {"http", "https"}:
@@ -399,16 +417,6 @@ def format_optional(value: object, empty: str = "无", limit: int = 120) -> str:
     """Format optional values for readable Chinese logs."""
     text = safe_log_text(value, limit=limit)
     return text if text else empty
-
-
-def format_log_fields(**fields: object) -> str:
-    """Format optional key-value fields for debug logs."""
-    parts: list[str] = []
-    for key, value in fields.items():
-        if value is None or value == "":
-            continue
-        parts.append(f"{key}={safe_log_text(value, 160)}")
-    return ", ".join(parts)
 
 
 def format_cn_log_fields(**fields: object) -> str:

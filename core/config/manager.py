@@ -7,18 +7,6 @@ from typing import Any
 from astrbot.api import logger
 from astrbot.core.config.astrbot_config import AstrBotConfig
 
-from .validator import ConfigValidator
-from .models import (
-    GenerationSettings,
-    ImageAuditSettings,
-    PersonaTemplate,
-    PluginConfig,
-    PromptAuditSettings,
-    SafetyAuditSettings,
-    UsageSettings,
-)
-from .provider_parser import ConfigProviderParserMixin
-from .templates import ConfigTemplateStoreMixin
 from ..shared.constants import (
     ALL_LLM_TOOLS,
     ALL_PROMPT_BODY_TEMPLATE_MATCH_ITEMS,
@@ -38,6 +26,8 @@ from ..shared.constants import (
     DEFAULT_MAX_RUNNING_GENERATION_TASKS,
     DEFAULT_NON_RETRYABLE_ERROR_KEYWORDS,
     DEFAULT_NON_RETRYABLE_STATUS_CODES,
+    DEFAULT_PERSIST_GENERATED_IMAGES,
+    DEFAULT_PERSISTED_IMAGE_LIMIT,
     DEFAULT_RATE_LIMIT_SECONDS,
     DEFAULT_RESOLUTION,
     DEFAULT_RESULT_INFO_ITEMS,
@@ -54,24 +44,38 @@ from ..shared.constants import (
     RESULT_INFO_USAGE,
 )
 from ..shared.logging import log_prefix, safe_log_text
-from ..shared.types import AdapterConfig, AdapterType
+from ..shared.types import AdapterConfig
+from .models import (
+    GenerationSettings,
+    ImageAuditSettings,
+    PersonaTemplate,
+    PluginConfig,
+    PresetTemplate,
+    PromptAuditSettings,
+    SafetyAuditSettings,
+    UsageSettings,
+)
+from .provider_parser import ConfigProviderParserMixin
+from .templates import PRESETS_MIGRATED_FIELD, ConfigTemplateStoreMixin
+from .validator import ConfigValidator
 
 __all__ = (
-    "ConfigManager",
-    "GenerationSettings",
-    "ImageAuditSettings",
     "LLM_TOOL_IMAGE_GENERATION",
     "LLM_TOOL_PRESET_EDIT",
     "LLM_TOOL_PRESET_QUERY",
     "LLM_TOOL_TASK_MANAGEMENT",
-    "PersonaTemplate",
-    "PluginConfig",
-    "PromptAuditSettings",
     "RESULT_INFO_COUNT",
     "RESULT_INFO_DURATION",
     "RESULT_INFO_MODEL",
     "RESULT_INFO_TASK_ID",
     "RESULT_INFO_USAGE",
+    "ConfigManager",
+    "GenerationSettings",
+    "ImageAuditSettings",
+    "PersonaTemplate",
+    "PluginConfig",
+    "PresetTemplate",
+    "PromptAuditSettings",
     "SafetyAuditSettings",
     "UsageSettings",
 )
@@ -101,14 +105,16 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
         user_limits_cfg = self._get_config_section("user_limits")
         safety_cfg = self._get_config_section("safety_audit")
         prompt_templates_cfg = self._get_config_section("prompt_templates")
+        if migrated := self.migrate_legacy_presets():
+            logger.info(
+                f"{LOG} 已将 {migrated} 个旧版预设迁移到预设模板，旧配置保持不变"
+            )
         generation_task_history_cfg = self._get_config_section(
             "generation_task_history"
         )
         api_providers_raw = self._config.get("api_providers", [])
 
-        fallback_runtime_cfg = (
-            gen_cfg if not generation_runtime_cfg else generation_runtime_cfg
-        )
+        fallback_runtime_cfg = generation_runtime_cfg or gen_cfg
         all_provider_configs = self._load_provider_configs(
             api_providers_raw,
             fallback_runtime_cfg,
@@ -127,7 +133,11 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
                 generation_task_history_cfg,
             ),
             safety_audit_settings=self._parse_safety_audit_settings(safety_cfg),
-            presets=self._load_presets(prompt_templates_cfg.get("presets", [])),
+            presets=self._load_presets(
+                prompt_templates_cfg.get("presets", []),
+                prompt_templates_cfg.get("preset_templates", []),
+                migrated=bool(prompt_templates_cfg.get(PRESETS_MIGRATED_FIELD)),
+            ),
             personas=self._load_personas(prompt_templates_cfg.get("personas", [])),
             prompt_body_template_match=self._parse_prompt_body_template_match(
                 prompt_templates_cfg
@@ -182,8 +192,8 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
         """Parse image generation behavior settings."""
         # Prefer the standalone runtime and task-history sections, but keep
         # reading old generation.* values when users upgrade from older versions.
-        fallback_runtime_cfg = cfg if not runtime_cfg else runtime_cfg
-        fallback_history_cfg = cfg if not history_cfg else history_cfg
+        fallback_runtime_cfg = runtime_cfg or cfg
+        fallback_history_cfg = history_cfg or cfg
         return GenerationSettings(
             default_aspect_ratio=self._get_str(
                 cfg,
@@ -246,6 +256,17 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
                 fallback_history_cfg,
                 "generation_task_history_retention_days",
                 DEFAULT_GENERATION_TASK_HISTORY_RETENTION_DAYS,
+                min_value=0,
+            ),
+            persist_generated_images=self._get_bool(
+                fallback_history_cfg,
+                "persist_generated_images",
+                DEFAULT_PERSIST_GENERATED_IMAGES,
+            ),
+            persisted_image_limit=self._get_int(
+                fallback_history_cfg,
+                "persisted_image_limit",
+                DEFAULT_PERSISTED_IMAGE_LIMIT,
                 min_value=0,
             ),
             debug_request_logging=self._get_bool(
@@ -510,7 +531,7 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
         return self._plugin_config.adapter_config
 
     @property
-    def presets(self) -> dict[str, Any]:
+    def presets(self) -> dict[str, PresetTemplate]:
         """Return configured prompt presets."""
         return self._plugin_config.presets
 
@@ -529,7 +550,7 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
         """Return whether any prompt-body template matching is enabled."""
         return bool(self._plugin_config.prompt_body_template_match)
 
-    def prompt_body_presets(self) -> dict[str, Any]:
+    def prompt_body_presets(self) -> dict[str, PresetTemplate]:
         """Return presets scanned in prompt body, or empty when disabled."""
         selected = self._plugin_config.prompt_body_template_match
         if PROMPT_BODY_MATCH_PRESET not in selected:
@@ -606,6 +627,16 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
         return self._plugin_config.generation_settings.generation_task_history_retention_days
 
     @property
+    def persist_generated_images(self) -> bool:
+        """Return whether generated images are persisted in the plugin data dir."""
+        return self._plugin_config.generation_settings.persist_generated_images
+
+    @property
+    def persisted_image_limit(self) -> int:
+        """Return the persisted image count limit; 0 means unlimited."""
+        return self._plugin_config.generation_settings.persisted_image_limit
+
+    @property
     def result_info_items(self) -> set[str]:
         """Return result metadata items shown after successful generation."""
         return self._plugin_config.generation_settings.result_info_items
@@ -633,18 +664,3 @@ class ConfigManager(ConfigProviderParserMixin, ConfigTemplateStoreMixin):
     def safety_audit_settings(self) -> SafetyAuditSettings:
         """Return safety audit settings."""
         return self._plugin_config.safety_audit_settings
-
-    # Provider lookup helpers.
-    def get_provider_config(self, adapter_type: AdapterType) -> AdapterConfig | None:
-        """Return provider configuration for one adapter type.
-
-        Args:
-            adapter_type: Adapter type to look up.
-
-        Returns:
-            Matching provider config, or None when unavailable.
-        """
-        for cfg in self._all_provider_configs:
-            if cfg.type == adapter_type:
-                return cfg
-        return None

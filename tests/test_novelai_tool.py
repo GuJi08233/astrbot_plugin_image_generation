@@ -52,6 +52,9 @@ class NovelAIToolTest(unittest.IsolatedAsyncioTestCase):
         agent_context = types.ModuleType("astrbot.core.astr_agent_context")
         agent_context.AstrAgentContext = object
         modules[agent_context.__name__] = agent_context
+        message_tools = types.ModuleType("astrbot.core.tools.message_tools")
+        message_tools.SendMessageToUserTool = _FunctionTool
+        modules[message_tools.__name__] = message_tools
         with patch.dict(sys.modules, modules):
             self.module = importlib.import_module(f"{namespace}.core.llm.tools")
             self.shared = importlib.import_module(f"{namespace}.core.shared.types")
@@ -201,12 +204,9 @@ class NovelAIToolTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("提示词审核未通过", result)
         self.plugin.create_generation_task.assert_not_called()
+        # Only the read-only pre-check ran; quota is reserved by task creation.
         self.assertEqual(self.plugin.usage_manager.check_rate_limit.call_count, 1)
-        self.assertFalse(
-            self.plugin.usage_manager.check_rate_limit.call_args.kwargs[
-                "update_timestamp"
-            ]
-        )
+        self.plugin.usage_manager.reserve_usage.assert_not_called()
 
     async def test_nested_assets_are_prepared_and_keep_their_roles(self):
         """Forward role-specific prepared images rather than generic references."""
@@ -232,8 +232,10 @@ class NovelAIToolTest(unittest.IsolatedAsyncioTestCase):
             options["inpaint"]["mask"], "https://images.example.invalid/mask.png"
         )
 
-    async def test_asset_failure_or_cancellation_releases_reserved_usage(self):
-        """Release quota when asset preparation fails after the reservation."""
+    async def test_asset_failure_or_cancellation_creates_no_task(self):
+        """Stop before task creation, which is where quota gets reserved."""
+        # No task record exists yet, so there is no reservation to release.
+        self.plugin.task_manager.get_generation_task.return_value = None
         for failure in (ValueError("invalid mask"), asyncio.CancelledError()):
             with self.subTest(failure=type(failure).__name__):
                 self.plugin.usage_manager.release_reserved_usage.reset_mock()
@@ -252,9 +254,7 @@ class NovelAIToolTest(unittest.IsolatedAsyncioTestCase):
                             {"event": self.event}, prompt="a white cat", novelai={}
                         )
                         self.assertIn("invalid mask", result)
-                self.plugin.usage_manager.release_reserved_usage.assert_called_once_with(
-                    "test-session", is_admin=False, count=1
-                )
+                self.plugin.usage_manager.release_reserved_usage.assert_not_called()
                 self.plugin.create_generation_task.assert_not_called()
 
     def test_schema_is_valid_and_hidden_for_other_adapters(self):

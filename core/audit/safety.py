@@ -484,7 +484,20 @@ class SafetyAuditor:
                 return allow, reason or ("审核通过" if allow else "审核未通过")
 
         lowered = text.lower()
-        reject_tokens = ("reject", "deny", "forbid", "不通过", "违规", "拒绝", "不允许")
+        reject_tokens = (
+            "reject",
+            "deny",
+            "forbid",
+            "unsafe",
+            "disallow",
+            "not allowed",
+            "not safe",
+            "不通过",
+            "违规",
+            "拒绝",
+            "不允许",
+            "不安全",
+        )
         allow_tokens = ("allow", "pass", "safe", "通过", "安全", "允许")
 
         if any(token in lowered for token in reject_tokens):

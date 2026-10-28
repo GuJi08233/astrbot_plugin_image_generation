@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections import deque
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
@@ -18,6 +19,23 @@ if TYPE_CHECKING:
 
 
 LOG = log_prefix("Reference")
+MAX_CONTEXT_IMAGE_SCAN_MESSAGES = 20
+
+# Reference sources stay in separate collectors. Add a source only in the
+# collector that already owns it; do not merge these rules behind switches.
+#
+# | Source | Command | Tool | Current-message cache |
+# | --- | --- | --- | --- |
+# | Current image | yes | only with use_context_images | stores direct images |
+# | Replied image | yes | only with use_context_images | no |
+# | Mention avatar | yes | only avatar_references IDs | no |
+# | Explicit URL/path | no | reference_images | no |
+# | Preset/persona image | supplied names | supplied names | no |
+# | Recent context cache | no | fallback for use_context_images | owner |
+
+
+class ContextReferenceImageNotFoundError(Exception):
+    """Raised when an image edit requested chat context but none was usable."""
 
 
 def ensure_image_data(item: ImageData | tuple[bytes, str]) -> ImageData:
@@ -47,6 +65,89 @@ def normalize_string_items(raw: Any) -> list[str]:
         return items
     item = str(raw).strip()
     return [item] if item else []
+
+
+def image_reference_from_part(part: Any) -> str | None:
+    """Extract one image reference from an OpenAI-style or AstrBot content part.
+
+    AstrBot persists ``ImageURLPart`` as ``{"image_url": "https://..."}``, while
+    assembled provider context uses ``{"image_url": {"url": "data:image/..."}}``.
+    """
+    part_type = (
+        part.get("type") if isinstance(part, dict) else getattr(part, "type", None)
+    )
+    if part_type != "image_url":
+        return None
+
+    image_url = (
+        part.get("image_url")
+        if isinstance(part, dict)
+        else getattr(part, "image_url", None)
+    )
+    if isinstance(image_url, dict):
+        image_url = image_url.get("url")
+    elif isinstance(image_url, str):
+        image_url = image_url.strip()
+    else:
+        image_url = getattr(image_url, "url", None)
+
+    if isinstance(image_url, str) and image_url.strip():
+        return image_url.strip()
+    return None
+
+
+def extract_latest_user_context_images(
+    messages: Any,
+    *,
+    message_limit: int = MAX_CONTEXT_IMAGE_SCAN_MESSAGES,
+) -> list[str]:
+    """Return image references from the latest recent image-bearing user message."""
+    if (
+        not isinstance(messages, Iterable)
+        or isinstance(
+            messages,
+            (str, bytes, bytearray, dict),
+        )
+        or message_limit <= 0
+    ):
+        return []
+
+    recent_messages = deque(messages, maxlen=message_limit)
+    for message in reversed(recent_messages):
+        role = (
+            message.get("role")
+            if isinstance(message, dict)
+            else getattr(
+                message,
+                "role",
+                None,
+            )
+        )
+        if role != "user":
+            continue
+        content = (
+            message.get("content")
+            if isinstance(message, dict)
+            else getattr(
+                message,
+                "content",
+                None,
+            )
+        )
+        if not isinstance(content, Iterable) or isinstance(
+            content,
+            (str, bytes, bytearray, dict),
+        ):
+            continue
+
+        references = [
+            reference
+            for part in content
+            if (reference := image_reference_from_part(part))
+        ]
+        if references:
+            return references
+    return []
 
 
 def resolve_avatar_user_id(event: Any, ref: str) -> str | None:
@@ -93,26 +194,37 @@ def deduplicate_reference_images(
     return unique_images
 
 
-async def collect_reference_images_from_personas(
+async def collect_reference_images_from_templates(
     image_processor: ImageProcessor,
-    persona_images: list[tuple[str, str]],
+    template_images: list[tuple[str, str]],
     *,
     task_id: str | None = None,
     log_context: str = "Reference",
     workspace_dir: str | None = None,
 ) -> list[ImageData]:
-    """Download all configured persona reference images."""
+    """Download all configured preset and persona reference images.
+
+    Args:
+        image_processor: Image processor used to download or read each image.
+        template_images: ``(label, reference)`` pairs in application order.
+        task_id: Optional task id used in log prefixes.
+        log_context: Log prefix context name.
+        workspace_dir: Workspace directory used to allow local file reads.
+
+    Returns:
+        Downloaded reference images; failed entries are only logged.
+    """
     images_data: list[ImageData] = []
     task_log = log_prefix(log_context, task_id) if task_id else LOG
-    for persona_name, persona_image in persona_images:
-        if persona_image_data := await image_processor.download_image(
-            persona_image,
+    for template_label, template_image in template_images:
+        if image_data := await image_processor.download_image(
+            template_image,
             workspace_dir=workspace_dir,
         ):
-            images_data.append(persona_image_data)
+            images_data.append(image_data)
         else:
             logger.warning(
-                f"{task_log} 人设参考图获取失败: {safe_log_text(persona_name)}"
+                f"{task_log} 参考图获取失败: {safe_log_text(template_label)}"
             )
     return images_data
 
@@ -145,17 +257,17 @@ async def download_reference_images(
 async def collect_command_reference_images(
     image_processor: ImageProcessor,
     event: AstrMessageEvent,
-    persona_images: list[tuple[str, str]],
+    template_images: list[tuple[str, str]],
     *,
     task_id: str,
 ) -> list[ImageData]:
-    """Collect command persona and message reference images."""
+    """Collect command template and message reference images."""
     workspace_dir = image_processor.workspace_dir_for_origin(
         getattr(event, "unified_msg_origin", None)
     )
-    images_data = await collect_reference_images_from_personas(
+    images_data = await collect_reference_images_from_templates(
         image_processor,
-        persona_images,
+        template_images,
         task_id=task_id,
         log_context="Task",
         workspace_dir=workspace_dir,
@@ -174,14 +286,22 @@ async def collect_tool_reference_images(
     *,
     capabilities: ImageCapability,
     reference_images: Any = None,
+    context_images: Any = None,
+    cached_context_images: list[ImageData] | None = None,
+    use_context_images: bool = False,
     avatar_references: Any = None,
-    persona_images: list[tuple[str, str]] | None = None,
+    template_images: list[tuple[str, str]] | None = None,
     task_id: str | None = None,
 ) -> list[ImageData]:
-    """Collect LLM tool persona, URL/path, and avatar reference images."""
+    """Collect LLM tool message, template, URL/path, and avatar reference images."""
     task_log = log_prefix("LLMTool", task_id) if task_id else LOG
     if not (capabilities & ImageCapability.IMAGE_TO_IMAGE):
-        if reference_images or avatar_references or persona_images:
+        if (
+            reference_images
+            or use_context_images
+            or avatar_references
+            or template_images
+        ):
             logger.warning(f"{task_log} 当前适配器不支持参考图，已忽略工具参考图参数")
         return []
 
@@ -191,16 +311,41 @@ async def collect_tool_reference_images(
         getattr(event, "unified_msg_origin", None)
     )
 
-    if persona_images:
-        images_data.extend(
-            await collect_reference_images_from_personas(
+    context_source_images: list[ImageData] = []
+    if use_context_images:
+        # Only actual message images count here. Mention avatars are collected
+        # later through avatar_references and must not block history or cache.
+        context_source_images = await image_processor.fetch_message_images_from_event(
+            event
+        )
+        if not context_source_images and cached_context_images:
+            context_source_images = [
+                ensure_image_data(image) for image in cached_context_images
+            ]
+        if not context_source_images and context_images:
+            context_source_images = await download_reference_images(
                 image_processor,
-                persona_images,
+                context_images,
+                reference_label="上下文",
+                task_id=task_id,
+                log_context="LLMTool",
+                workspace_dir=workspace_dir,
+            )
+        if not context_source_images:
+            raise ContextReferenceImageNotFoundError
+
+    if template_images:
+        images_data.extend(
+            await collect_reference_images_from_templates(
+                image_processor,
+                template_images,
                 task_id=task_id,
                 log_context="LLMTool",
                 workspace_dir=workspace_dir,
             )
         )
+
+    images_data.extend(context_source_images)
 
     images_data.extend(
         await download_reference_images(

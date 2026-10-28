@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 from astrbot.api import logger
 
@@ -23,14 +23,35 @@ class AgnesAIAdapter(BaseImageAdapter):
     """Agnes AI image generation adapter."""
 
     DEFAULT_BASE_URL = "https://apihub.agnes-ai.com"
+    CHINA_BASE_URL = "https://api.agnes-ai.cn"
     DEFAULT_MODEL = "agnes-image-2.1-flash"
 
-    EXTRA_1K_SIZE_MAP = {
+    # 2.1 / 2.5 use a size tier plus an optional ratio; 2.0 uses exact pixels.
+    TIER_MODELS = (
+        "agnes-image-2.1",
+        "agnes-image-2-1",
+        "agnes-image-2.5",
+        "agnes-image-2-5",
+    )
+    TIER_VALUES: ClassVar[set[str]] = {"1K", "2K", "3K", "4K"}
+    TIER_RATIOS: ClassVar[set[str]] = {
+        "1:1",
+        "3:4",
+        "4:3",
+        "16:9",
+        "9:16",
+        "2:3",
+        "3:2",
+        "21:9",
+    }
+    RATIO_FALLBACKS: ClassVar[dict[str, str]] = {"4:5": "3:4", "5:4": "4:3"}
+
+    EXTRA_1K_SIZE_MAP: ClassVar[dict[str, str]] = {
         "4:5": "832x1024",
         "5:4": "1024x832",
         "21:9": "1024x448",
     }
-    EXTRA_2K_SIZE_MAP = {
+    EXTRA_2K_SIZE_MAP: ClassVar[dict[str, str]] = {
         "4:5": "1632x2048",
         "5:4": "2048x1632",
         "21:9": "2048x864",
@@ -92,7 +113,7 @@ class AgnesAIAdapter(BaseImageAdapter):
 
     def _endpoint_url(self) -> str:
         """Build the Agnes AI image generation endpoint URL."""
-        base = (self.base_url or self.DEFAULT_BASE_URL).rstrip("/")
+        base = (self.base_url or self._region_base_url()).rstrip("/")
         suffix = "/v1/images/generations"
         if base.endswith(suffix):
             return base
@@ -100,14 +121,23 @@ class AgnesAIAdapter(BaseImageAdapter):
             return f"{base}/images/generations"
         return f"{base}{suffix}"
 
+    def _region_base_url(self) -> str:
+        """Return the default base URL for the configured region."""
+        region = str(self.config.extra.get("api_region") or "international").strip()
+        if region.lower() in {"china", "cn", "国内"}:
+            return self.CHINA_BASE_URL
+        return self.DEFAULT_BASE_URL
+
     def _build_payload(self, request: GenerationRequest) -> dict[str, Any]:
         """Build the request payload."""
         payload: dict[str, Any] = {
             "model": self._model_name(),
             "prompt": request.prompt,
         }
-        if size := self._resolve_size(request):
-            payload["size"] = size
+        size, ratio = self._resolve_size(request)
+        payload["size"] = size
+        if ratio:
+            payload["ratio"] = ratio
 
         response_format = self._response_format()
         extra_body: dict[str, Any] = {}
@@ -129,6 +159,15 @@ class AgnesAIAdapter(BaseImageAdapter):
         """Return the active model name."""
         return self.model or self.DEFAULT_MODEL
 
+    def _model_name_lower(self) -> str:
+        """Return the lower-cased active model name."""
+        return self._model_name().lower()
+
+    def _uses_size_tiers(self) -> bool:
+        """Return whether the active model uses tier-based sizes."""
+        model = self._model_name_lower()
+        return any(name in model for name in self.TIER_MODELS)
+
     def _response_format(self) -> str:
         """Resolve the Agnes response format setting."""
         value = str(self.config.extra.get("response_format") or "base64")
@@ -137,19 +176,40 @@ class AgnesAIAdapter(BaseImageAdapter):
             return "url"
         return "base64"
 
-    def _resolve_size(self, request: GenerationRequest) -> str | None:
-        """Resolve the Agnes AI size parameter from aspect ratio and resolution."""
-        if not request.aspect_ratio or request.aspect_ratio == UNSPECIFIED_OPTION:
-            return None
+    def _resolve_size(self, request: GenerationRequest) -> tuple[str, str | None]:
+        """Resolve the Agnes AI size and optional ratio parameters.
 
+        Args:
+            request: Image generation request.
+
+        Returns:
+            A ``(size, ratio)`` tuple. ``ratio`` is only used by models that
+            support tier-based sizes.
+        """
         aspect_ratio = request.aspect_ratio
-        resolution = (request.resolution or "").upper()
-        if resolution in ("2K", "4K"):
-            size_map = {**RESOLUTION_2K_MAP, **self.EXTRA_2K_SIZE_MAP}
-            return size_map.get(aspect_ratio, "2048x2048")
+        if aspect_ratio == UNSPECIFIED_OPTION:
+            aspect_ratio = None
 
-        size_map = {**RESOLUTION_1K_MAP, **self.EXTRA_1K_SIZE_MAP}
-        return size_map.get(aspect_ratio, "1024x1024")
+        resolution = (request.resolution or "").upper()
+        if self._uses_size_tiers():
+            size = resolution if resolution in self.TIER_VALUES else "1K"
+            ratio = None
+            if aspect_ratio:
+                ratio = self.RATIO_FALLBACKS.get(aspect_ratio, aspect_ratio)
+                if ratio not in self.TIER_RATIOS:
+                    ratio = None
+            return size, ratio
+
+        if resolution in ("2K", "4K"):
+            if aspect_ratio:
+                size_map = {**RESOLUTION_2K_MAP, **self.EXTRA_2K_SIZE_MAP}
+                return size_map.get(aspect_ratio, "2048x2048"), None
+            return "2048x2048", None
+
+        if aspect_ratio:
+            size_map = {**RESOLUTION_1K_MAP, **self.EXTRA_1K_SIZE_MAP}
+            return size_map.get(aspect_ratio, "1024x1024"), None
+        return "1024x1024", None
 
     def _build_image_refs(self, images: list[ImageData]) -> list[str]:
         """Build Agnes AI image-to-image reference data URLs.
@@ -207,21 +267,6 @@ class AgnesAIAdapter(BaseImageAdapter):
             return None, "未找到有效的图片数据"
 
         return images, None
-
-    def _decode_base64_image(
-        self, value: Any, task_id: str | None = None
-    ) -> bytes | None:
-        """Decode a b64_json or data URL image value."""
-        data = str(value or "")
-        if ";base64," in data:
-            _, _, data = data.partition(";base64,")
-        try:
-            return base64.b64decode(data)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                f"{self._get_log_prefix(task_id)} Base64 解码失败: {safe_log_error_body(exc)}"
-            )
-            return None
 
     async def _download_image(
         self, url: str, task_id: str | None = None

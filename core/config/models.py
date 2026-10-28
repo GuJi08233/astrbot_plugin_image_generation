@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 from ..shared.constants import (
     ALL_LLM_TOOLS,
@@ -25,6 +24,8 @@ from ..shared.constants import (
     DEFAULT_MODERATION_MODEL,
     DEFAULT_NON_RETRYABLE_ERROR_KEYWORDS,
     DEFAULT_NON_RETRYABLE_STATUS_CODES,
+    DEFAULT_PERSIST_GENERATED_IMAGES,
+    DEFAULT_PERSISTED_IMAGE_LIMIT,
     DEFAULT_PROMPT_AUDIT_PROMPT,
     DEFAULT_RATE_LIMIT_SECONDS,
     DEFAULT_RESOLUTION,
@@ -64,6 +65,8 @@ class GenerationSettings:
     generation_task_history_retention_days: int = (
         DEFAULT_GENERATION_TASK_HISTORY_RETENTION_DAYS
     )
+    persist_generated_images: bool = DEFAULT_PERSIST_GENERATED_IMAGES
+    persisted_image_limit: int = DEFAULT_PERSISTED_IMAGE_LIMIT
     debug_request_logging: bool = False
     show_user_error_details: bool = False
     non_retryable_status_codes: list[int] = field(
@@ -76,6 +79,17 @@ class GenerationSettings:
         default_factory=lambda: set(DEFAULT_RESULT_INFO_ITEMS)
     )
     start_task_message_template: str = "已开始生图任务{reference_images_block}{preset_block}{persona_block}{image_count_block} [任务ID: {task_id}]"
+
+
+@dataclass
+class PresetTemplate:
+    """Image generation prompt preset."""
+
+    name: str
+    prompt: str
+    aspect_ratio: str = ""
+    resolution: str = ""
+    image: str = ""
 
 
 @dataclass
@@ -138,7 +152,7 @@ class PluginConfig:
     safety_audit_settings: SafetyAuditSettings = field(
         default_factory=SafetyAuditSettings
     )
-    presets: dict[str, Any] = field(default_factory=dict)
+    presets: dict[str, PresetTemplate] = field(default_factory=dict)
     personas: dict[str, PersonaTemplate] = field(default_factory=dict)
     prompt_body_template_match: set[str] = field(default_factory=set)
     enabled_llm_tools: set[str] = field(default_factory=lambda: set(ALL_LLM_TOOLS))
@@ -148,6 +162,7 @@ __all__ = (
     "GenerationSettings",
     "ImageAuditSettings",
     "PersonaTemplate",
+    "PresetTemplate",
     "PluginConfig",
     "PromptAuditSettings",
     "SafetyAuditSettings",

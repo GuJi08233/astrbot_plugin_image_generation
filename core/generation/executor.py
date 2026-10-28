@@ -123,6 +123,10 @@ class GenerationExecutor:
 
         capabilities = self.generator.adapter.get_capabilities()
         task_log = log_prefix("Task", task_id)
+        logger.debug(
+            f"{task_log} 请求尺寸: 宽高比={safe_log_text(aspect_ratio)}，"
+            f"分辨率={safe_log_text(resolution)}"
+        )
         try:
             image_count = int(image_count)
         except (TypeError, ValueError):
@@ -190,7 +194,7 @@ class GenerationExecutor:
                 negative_prompt,
                 novelai,
             )
-        except (asyncio.CancelledError, Exception):
+        except Exception:
             self.release_generation_task_quota_once(task_id)
             raise
 
@@ -212,6 +216,7 @@ class GenerationExecutor:
             record.usage_scope,
             is_admin=record.is_usage_limit_admin,
             count=record.reserved_count,
+            quota_date=record.quota_date,
         )
         self.task_manager.mark_generation_task_quota_released(task_id)
 
@@ -235,6 +240,7 @@ class GenerationExecutor:
             is_admin=record.is_usage_limit_admin,
             reserved_count=record.reserved_count,
             actual_count=actual_count,
+            quota_date=record.quota_date,
         )
         self.task_manager.mark_generation_task_quota_settled(task_id)
 
@@ -290,10 +296,12 @@ class GenerationExecutor:
             self.task_manager.mark_generation_task_failed(task_id, error)
             if skip_direct_delivery:
                 return
-            await self.context.send_message(
+            sent = await self.context.send_message(
                 unified_msg_origin,
                 MessageChain().message(format_generation_failure_message(error)),
             )
+            if sent:
+                self.task_manager.mark_generation_task_delivered(task_id)
             return
 
         logger.debug(
@@ -325,13 +333,15 @@ class GenerationExecutor:
             )
             if skip_direct_delivery:
                 return
-            await self.context.send_message(
+            sent = await self.context.send_message(
                 unified_msg_origin,
                 MessageChain().message(f"❌ 图片内容审核未通过: {image_reason}"),
             )
+            if sent:
+                self.task_manager.mark_generation_task_delivered(task_id)
             return
 
-        result_message = "图片已生成，等待 AI 处理" if deliver_via_ai else "图片已生成"
+        result_message = "图片已生成"
         if errors:
             result_message = f"{result_message}；部分失败: {'; '.join(errors)}"
 
@@ -382,6 +392,11 @@ class GenerationExecutor:
             message=delivery_message,
             audit_results=audit_results,
         )
+        if sent_batches:
+            self.task_manager.mark_generation_task_delivered(
+                task_id,
+                paths=[] if send_errors else generated_file_paths,
+            )
 
     async def _send_generated_images(
         self,

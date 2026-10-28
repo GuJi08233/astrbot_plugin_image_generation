@@ -8,13 +8,14 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ..shared.constants import TASK_ERROR_MAX_CHARS, TASK_ITEM_ERROR_MAX_CHARS
+from ..shared.logging import log_prefix, safe_log_error_body, safe_log_text
 from .models import (
     GenerationTaskItem,
     GenerationTaskRecord,
     GenerationTaskStatus,
     coerce_generation_item_status,
 )
-from ..shared.logging import log_prefix, safe_log_error_body, safe_log_text
 
 LOG = log_prefix("GenerationTaskStore")
 
@@ -140,6 +141,9 @@ class GenerationTaskStore:
             "audit_results": [
                 dict(entry) for entry in record.audit_results if isinstance(entry, dict)
             ],
+            "delivered": record.delivered,
+            "delivered_at": self._datetime_to_str(record.delivered_at),
+            "delivered_paths": list(record.delivered_paths),
             "current_index": record.current_index,
             "retry_attempt": record.retry_attempt,
             "max_retry_attempts": record.max_retry_attempts,
@@ -149,6 +153,8 @@ class GenerationTaskStore:
             ],
             "usage_scope": record.usage_scope,
             "reserved_count": record.reserved_count,
+            "quota_date": record.quota_date,
+            "is_usage_limit_admin": record.is_usage_limit_admin,
             "quota_released": record.quota_released,
             "quota_settled": record.quota_settled,
         }
@@ -217,10 +223,19 @@ class GenerationTaskStore:
             started_at=self._str_to_datetime(raw_record.get("started_at")),
             finished_at=self._str_to_datetime(raw_record.get("finished_at")),
             message=safe_log_error_body(raw_record.get("message") or "", 300),
-            error=safe_log_error_body(raw_record.get("error") or "", 300),
+            # Provider error bodies are the only place the Page can show what went
+            # wrong, so keep the readable message instead of the log-sized snippet.
+            error=safe_log_error_body(
+                raw_record.get("error") or "",
+                TASK_ERROR_MAX_CHARS,
+                field_limit=TASK_ERROR_MAX_CHARS,
+            ),
             result_count=self._safe_int(raw_record.get("result_count"), 0, 0),
             result_paths=self._safe_str_list(raw_record.get("result_paths")),
             audit_results=self._safe_dict_list(raw_record.get("audit_results")),
+            delivered=bool(raw_record.get("delivered", False)),
+            delivered_at=self._str_to_datetime(raw_record.get("delivered_at")),
+            delivered_paths=self._safe_str_list(raw_record.get("delivered_paths")),
             current_index=self._safe_int(raw_record.get("current_index"), 0, 0),
             retry_attempt=self._safe_int(raw_record.get("retry_attempt"), 0, 0),
             max_retry_attempts=self._safe_int(
@@ -234,6 +249,8 @@ class GenerationTaskStore:
             ),
             usage_scope=str(raw_record.get("usage_scope") or ""),
             reserved_count=self._safe_int(raw_record.get("reserved_count"), 0, 0),
+            quota_date=str(raw_record.get("quota_date") or "").strip(),
+            is_usage_limit_admin=bool(raw_record.get("is_usage_limit_admin", False)),
             quota_released=bool(raw_record.get("quota_released", False)),
             quota_settled=bool(raw_record.get("quota_settled", False)),
         )
@@ -271,7 +288,11 @@ class GenerationTaskStore:
                 index=index,
                 status=coerce_generation_item_status(raw_item.get("status")),
                 result_count=self._safe_int(raw_item.get("result_count"), 0, 0),
-                error=safe_log_error_body(raw_item.get("error") or "", 200),
+                error=safe_log_error_body(
+                    raw_item.get("error") or "",
+                    TASK_ITEM_ERROR_MAX_CHARS,
+                    field_limit=TASK_ITEM_ERROR_MAX_CHARS,
+                ),
                 retry_attempts=self._safe_int(raw_item.get("retry_attempts"), 0, 0),
                 max_retry_attempts=self._safe_int(
                     raw_item.get("max_retry_attempts"),

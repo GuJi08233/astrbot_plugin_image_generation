@@ -10,6 +10,9 @@ from __future__ import annotations
 LOG_PREFIX = "[ImageGen]"
 """Common log prefix."""
 
+PLUGIN_NAME = "astrbot_plugin_image_generation"
+"""Plugin name used for data paths and Web APIs."""
+
 
 # Safety settings.
 
@@ -94,6 +97,12 @@ DEFAULT_GENERATION_TASK_HISTORY_LIMIT = 1000
 DEFAULT_GENERATION_TASK_HISTORY_RETENTION_DAYS = 0
 """Default generation task history retention days; 0 disables age cleanup."""
 
+DEFAULT_PERSIST_GENERATED_IMAGES = True
+"""Default setting for persisting generated images in the plugin data directory."""
+
+DEFAULT_PERSISTED_IMAGE_LIMIT = 0
+"""Default persisted image count limit; 0 keeps every persisted image."""
+
 DEFAULT_GENERATION_IMAGE_COUNT = 1
 """Default image count per generation request."""
 
@@ -102,6 +111,17 @@ DEFAULT_MAX_GENERATION_IMAGE_COUNT = 10
 
 DEFAULT_MAX_IMAGES_PER_MESSAGE = 5
 """Default maximum number of images sent per message."""
+
+MAX_QUOTED_TEXT_CHARS = 1000
+"""Maximum characters taken from quoted messages and merged-forward cards."""
+
+# Provider errors are kept long enough for the Dashboard Page to show what the
+# upstream API actually returned; log-only paths use much smaller limits.
+TASK_ERROR_MAX_CHARS = 2000
+"""Maximum characters kept for one task-level provider error."""
+
+TASK_ITEM_ERROR_MAX_CHARS = 1000
+"""Maximum characters kept for one sub-request provider error."""
 
 DEFAULT_MAX_IMAGE_SIZE_MB = 10
 """Default maximum reference image size in MB."""
@@ -318,7 +338,7 @@ SUPPORTED_ASPECT_RATIOS = (
 
 # Supported resolutions.
 
-SUPPORTED_RESOLUTIONS = (UNSPECIFIED_OPTION, "1K", "2K", "4K")
+SUPPORTED_RESOLUTIONS = (UNSPECIFIED_OPTION, "1K", "1.5K", "2K", "4K")
 """Resolutions supported by tool parameters."""
 
 
@@ -338,6 +358,3 @@ VOLCENGINE_ARK_DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com"
 
 GITEE_AI_DEFAULT_BASE_URL = "https://ai.gitee.com"
 """Default Gitee AI base URL."""
-
-JIMENG_DEFAULT_BASE_URL = "http://localhost:5100"
-"""Default Jimeng2API base URL."""

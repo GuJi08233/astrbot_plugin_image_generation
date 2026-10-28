@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import base64
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 import aiohttp
-
 from astrbot.api import logger
 
 from ..core.adapters.base import BaseImageAdapter
@@ -35,7 +34,7 @@ class GiteeAIAdapter(BaseImageAdapter):
     DEFAULT_BASE_URL = GITEE_AI_DEFAULT_BASE_URL
     DEFAULT_TEXT_MODEL = "z-image-turbo"
     DEFAULT_EDIT_MODEL = "LongCat-Image-Edit"
-    EDIT_MODELS = {
+    EDIT_MODELS: ClassVar[set[str]] = {
         "animesharp",
         "dreamo",
         "flux.1-dev",
@@ -47,7 +46,7 @@ class GiteeAIAdapter(BaseImageAdapter):
         "longcat-image-edit",
         "qwen-image-edit",
     }
-    IMAGE_EXTENSIONS = {
+    IMAGE_EXTENSIONS: ClassVar[dict[str, str]] = {
         "image/png": "png",
         "image/jpeg": "jpg",
         "image/jpg": "jpg",
@@ -57,12 +56,12 @@ class GiteeAIAdapter(BaseImageAdapter):
         "image/heif": "heif",
     }
 
-    EXTRA_1K_SIZE_MAP = {
+    EXTRA_1K_SIZE_MAP: ClassVar[dict[str, str]] = {
         "4:5": "832x1024",
         "5:4": "1024x832",
         "21:9": "1024x448",
     }
-    EXTRA_2K_SIZE_MAP = {
+    EXTRA_2K_SIZE_MAP: ClassVar[dict[str, str]] = {
         "4:5": "1632x2048",
         "5:4": "2048x1632",
         "21:9": "2048x864",
@@ -176,6 +175,7 @@ class GiteeAIAdapter(BaseImageAdapter):
         add_field("prompt", request.prompt)
         if size := self._resolve_size(request):
             add_field("size", size)
+        self._log_debug_json("请求表单尺寸", {"size": size}, request.task_id)
         add_field("n", "1")
 
         for index, image in enumerate(request.images[:1], start=1):
@@ -328,21 +328,6 @@ class GiteeAIAdapter(BaseImageAdapter):
         if self.debug_request_logging:
             logger.debug(f"{prefix} 成功提取 {len(images)} 张图像")
         return images, None
-
-    def _decode_base64_image(
-        self, value: Any, task_id: str | None = None
-    ) -> bytes | None:
-        """Decode a b64_json or data URL image value."""
-        data = str(value or "")
-        if ";base64," in data:
-            _, _, data = data.partition(";base64,")
-        try:
-            return base64.b64decode(data)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                f"{self._get_log_prefix(task_id)} Base64 解码失败: {safe_log_error_body(exc)}"
-            )
-            return None
 
     async def _download_image(
         self, url: str, task_id: str | None = None

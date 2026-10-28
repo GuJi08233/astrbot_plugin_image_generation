@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 from astrbot.api import logger
 
@@ -21,7 +21,7 @@ class SiliconFlowAdapter(BaseImageAdapter):
 
     DEFAULT_BASE_URL = SILICONFLOW_DEFAULT_BASE_URL
 
-    KOLORS_IMAGE_SIZE_MAP = {
+    KOLORS_IMAGE_SIZE_MAP: ClassVar[dict[str, str]] = {
         "1:1": "1024x1024",
         "3:4": "960x1280",
         "4:5": "960x1280",
@@ -34,7 +34,7 @@ class SiliconFlowAdapter(BaseImageAdapter):
         "16:9": "1280x720",
         "21:9": "1280x720",
     }
-    QWEN_IMAGE_SIZE_MAP = {
+    QWEN_IMAGE_SIZE_MAP: ClassVar[dict[str, str]] = {
         "1:1": "1328x1328",
         "16:9": "1664x928",
         "9:16": "928x1664",

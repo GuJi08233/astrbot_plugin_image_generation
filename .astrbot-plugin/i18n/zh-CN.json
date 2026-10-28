@@ -6,23 +6,21 @@
   },
   "pages": {
     "dashboard": {
-      "eyebrow": "Plugin Page",
       "title": "通用生图控制台",
-      "description": "在 AstrBot WebUI 中提交生图任务、查看队列状态并下载生成结果。",
       "refresh": "刷新",
       "submit": "开始生成",
       "submitting": "提交中...",
-      "uploading": "上传中...",
       "status": {
         "model": "当前模型",
-        "queue": "队列",
+        "modelSwitched": "模型已切换: {model}",
         "queued": "排队中",
         "running": "生成中",
         "succeeded": "已完成",
         "failed": "失败",
         "cancelling": "取消中",
         "cancelled": "已取消",
-        "pending": "等待中"
+        "pending": "等待中",
+        "notReady": "未初始化"
       },
       "form": {
         "eyebrow": "Create",
@@ -47,6 +45,9 @@
         "referenceImages": "参考图",
         "referenceHint": "支持 jpg/png/webp/gif/heic/heif，按配置限制大小。",
         "referenceUnsupported": "当前适配器未声明图生图能力。",
+        "openReference": "点击查看大图",
+        "removeReference": "移除参考图",
+        "referenceCount": "已选择 {count} 张参考图",
         "noPresets": "暂无预设",
         "noPersonas": "暂无人设",
         "noModels": "使用当前配置模型",
@@ -54,7 +55,6 @@
         "resultEmptyTitle": "提交后在此查看结果",
         "resultEmptyDescription": "生成进度、错误信息和图片结果会显示在这里，无需离开当前页面。",
         "resultTitle": "本次生成",
-        "resultCount": "{count} 个任务",
         "openTask": "在任务页查看",
         "clearResult": "关闭结果",
         "negativePromptPromptHint": "本次反向词会与正向词合并为同一次请求中的语义约束，不使用独立负向通道。不会修改供应商默认值。",
@@ -64,16 +64,15 @@
         "eyebrow": "Queue",
         "title": "任务队列",
         "empty": "暂无任务",
-        "createdAt": "创建",
-        "progress": "进度",
-        "results": "结果",
         "keywordPlaceholder": "任务 ID / 提示词 / 预设 / 人设 / 模型 / UMO",
         "sourceAll": "全部来源",
         "modelAll": "全部模型",
         "count": "共 {total} 条，当前第 {page}/{pages} 页",
         "prevPage": "上一页",
         "nextPage": "下一页",
-        "pageInfo": "第 {page} / {pages} 页"
+        "pageInfo": "第 {page} / {pages} 页",
+        "cleanup": "清理已结束",
+        "cleanupDone": "已清理 {removed} 个任务，删除 {files} 个图片文件"
       },
       "filter": {
         "all": "全部",
@@ -85,19 +84,10 @@
         "title": "任务详情",
         "cancel": "取消任务",
         "download": "下载图片",
-        "taskId": "任务 ID",
-        "createdAt": "创建时间",
-        "startedAt": "开始时间",
-        "finishedAt": "结束时间",
         "duration": "耗时",
-        "queued": "排队",
         "requested": "请求数量",
         "references": "参考图",
-        "preset": "预设",
-        "persona": "人设",
         "template": "模板",
-        "none": "无",
-        "message": "消息",
         "error": "错误",
         "items": "子任务",
         "results": "生成结果",
@@ -109,16 +99,20 @@
         "previewUnavailable": "暂无预览",
         "previewFailed": "预览失败",
         "expandPrompt": "展开完整提示词",
-        "collapsePrompt": "收起提示词"
+        "collapsePrompt": "收起提示词",
+        "promptNotStored": "历史记录未保存完整提示词，仅能显示摘要",
+        "viewError": "查看完整错误",
+        "collapseError": "收起错误",
+        "audit": "审核详情",
+        "delete": "删除任务",
+        "reaudit": "复审图片"
       },
       "message": {
-        "stateLoaded": "状态已刷新",
         "taskSubmitted": "任务已提交",
         "uploaded": "参考图已上传",
         "cancelled": "已请求取消任务",
-        "downloadStarted": "已开始下载",
-        "galleryLoaded": "图库已刷新",
-        "statsLoaded": "统计已刷新"
+        "imageDeleted": "图片已删除",
+        "taskDeleted": "任务已删除"
       },
       "error": {
         "generic": "操作失败"
@@ -145,6 +139,10 @@
         "modelMeta": "模型 {models}",
         "modelSuccessRate": "成功率 {rate}%",
         "noData": "暂无统计数据",
+        "rangeCaption": "{range} · 共 {total} 个任务",
+        "trendCaption": "{granularity} · 区间内 {total} 个任务",
+        "granularityHour": "按小时",
+        "granularityDay": "按天",
         "avgDuration": "平均耗时 {duration}"
       },
       "gallery": {
@@ -154,13 +152,19 @@
         "unavailable": "文件已清理",
         "keywordPlaceholder": "任务 ID / 提示词 / 预设 / 模型",
         "modelAll": "全部模型",
-        "model": "模型",
         "daysAll": "全部时间",
         "days1": "近 1 天",
         "days7": "近 7 天",
         "days30": "近 30 天",
         "count": "共 {total} 张，可用 {available} 张",
-        "openTask": "查看任务"
+        "hiddenCount": "已隐藏 {count} 张已清理",
+        "hideUnavailable": "隐藏已清理",
+        "prevPage": "上一页",
+        "nextPage": "下一页",
+        "pageInfo": "第 {page} / {pages} 页",
+        "openTask": "查看任务",
+        "delete": "删除",
+        "reaudit": "复审"
       },
       "lightbox": {
         "close": "关闭",
@@ -208,6 +212,30 @@
         "vibeInformation": "信息提取量",
         "invalidVibeFile": "无法读取该 Vibe 文件：需要受支持的格式和有效的编码变体。",
         "vibeModelMismatch": "导入文件没有当前模型的编码，或导入后更换了模型。请为当前模型重新导入。"
+      },
+      "audit": {
+        "stageModeration": "Moderation 接口审核",
+        "stageAi": "AI 模型审核",
+        "blocked": "已拦截",
+        "passed": "通过",
+        "flagged": "服务端标记违规 (flagged)",
+        "hits": "命中规则",
+        "testEyebrow": "Audit",
+        "testTitle": "审核测试",
+        "testRun": "运行测试",
+        "testRunning": "测试中...",
+        "testHint": "按当前安全审核配置直接测试，不生成图片、不产生任务记录。提示词和图片可以只填其中一项。",
+        "testPrompt": "测试提示词",
+        "testPromptPlaceholder": "输入要测试的提示词，留空则跳过提示词审核。",
+        "testImage": "测试图片",
+        "testImageHint": "上传图片后按当前配置执行 Moderation / AI 图片审核。",
+        "testEmpty": "请先填写测试提示词或上传测试图片",
+        "promptResult": "提示词审核",
+        "imageResult": "图片审核",
+        "testDisabledPrompt": "提示词审核未启用（无屏蔽词且未开启 AI 提示词审核），任何提示词都会通过。",
+        "testDisabledImage": "图片审核未启用（Moderation 接口审核与 AI 图片审核均关闭），任何图片都会通过。",
+        "reauditTitle": "复审结果",
+        "reauditCount": "本次复审 {count} 张图片，按当前审核配置执行，不影响任务原有审核记录。"
       }
     }
   },
@@ -266,20 +294,13 @@
               "分辨率"
             ]
           },
-          "model_family": {
-            "labels": [
-              "自动",
-              "GPT Image",
-              "DALL·E"
-            ]
-          },
           "enable_streaming": {
             "description": "使用 SSE 流式请求",
             "hint": "文生图默认开启 SSE。部分兼容站点不支持流式时可关闭，改为普通 JSON 响应。"
           },
           "output_format": {
             "description": "GPT Image 输出格式",
-            "hint": "PNG 保留无损质量；JPEG 响应更小，适合会截断大型 Base64 响应的中转接口。仅影响 GPT Image 系列。",
+            "hint": "PNG 保留无损质量；JPEG 响应更小，适合会截断大型 Base64 响应的中转接口。",
             "labels": [
               "png",
               "jpeg",
@@ -385,6 +406,12 @@
           }
         },
         "volcengine_ark": {
+          "api_mode": {
+            "labels": [
+              "标准 API",
+              "Agent Plan"
+            ]
+          },
           "capability_options": {
             "labels": [
               "文生图",
@@ -393,10 +420,11 @@
               "分辨率"
             ]
           },
-          "sequential_image_generation": {
+          "output_format": {
             "labels": [
-              "禁用",
-              "自动"
+              "不发送",
+              "PNG",
+              "JPEG"
             ]
           },
           "optimize_prompt_mode": {
@@ -435,22 +463,18 @@
           }
         },
         "agnes_ai": {
+          "api_region": {
+            "labels": [
+              "国际版",
+              "中国版"
+            ]
+          },
           "response_format": {
             "labels": [
               "Base64",
               "URL"
             ]
           },
-          "capability_options": {
-            "labels": [
-              "文生图",
-              "图生图",
-              "宽高比",
-              "分辨率"
-            ]
-          }
-        },
-        "jimeng2api": {
           "capability_options": {
             "labels": [
               "文生图",
@@ -521,6 +545,16 @@
               "Base64",
               "Data URL",
               "URL"
+            ]
+          }
+        },
+        "comfyui": {
+          "capability_options": {
+            "labels": [
+              "文生图",
+              "图生图",
+              "宽高比",
+              "分辨率"
             ]
           }
         }

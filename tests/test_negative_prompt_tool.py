@@ -51,6 +51,9 @@ class NegativePromptToolTest(unittest.IsolatedAsyncioTestCase):
         agent_context = types.ModuleType("astrbot.core.astr_agent_context")
         agent_context.AstrAgentContext = object
         modules[agent_context.__name__] = agent_context
+        message_tools = types.ModuleType("astrbot.core.tools.message_tools")
+        message_tools.SendMessageToUserTool = _FunctionTool
+        modules[message_tools.__name__] = message_tools
         with patch.dict(sys.modules, modules):
             self.module = importlib.import_module(f"{namespace}.core.llm.tools")
             self.shared = importlib.import_module(f"{namespace}.core.shared.types")

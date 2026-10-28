@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from collections.abc import Callable, Coroutine
 from contextlib import suppress
 from typing import Any
@@ -14,30 +15,37 @@ from astrbot.api.star import Context
 from astrbot.core.agent.message import TextPart
 from astrbot.core.agent.tool import ToolSet
 from astrbot.core.cron.events import CronMessageEvent
+from astrbot.core.db.po import Conversation
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.provider.entities import ProviderRequest
-from astrbot.core.tools.message_tools import SendMessageToUserTool
-from astrbot.core.utils.history_saver import persist_agent_history
 
 from ..config.manager import ConfigManager
 from ..formatting.result import format_generation_failure_message
-from ..tasks.models import GenerationTaskRecord, GenerationTaskStatus
+from ..generation.image_processor import ImageProcessor
 from ..shared.logging import log_prefix, safe_log_text
 from ..tasks.manager import TaskManager
+from ..tasks.models import GenerationTaskRecord, GenerationTaskStatus
+from .tools import DeliverySendMessageToUserTool
 
 IMAGE_GENERATION_TASK_WOKE_SYSTEM_PROMPT = (
     "You are an autonomous proactive agent.\n\n"
-    "You are awakened because an image generation task you initiated earlier has completed.\n"
-    "# IMPORTANT RULES\n"
-    "1. This is NOT a normal chat turn. Do NOT greet the user. Do NOT ask questions unless strictly necessary.\n"
-    "2. You MUST use the `send_message_to_user` tool to send the final image generation result to the user; otherwise the user will not see it.\n"
-    "3. If the task succeeded, send the generated image(s) to the user with type='image' and the provided local path. You may add a short plain text note if helpful.\n"
-    "4. If the task failed, send a concise failure message to the user.\n"
-    "5. Do not call `generate_image` again for this completed task. Do not repeat the same image unless necessary.\n"
-    "6. If generated images are attached in this request, review them before deciding the final wording. If images are not attached, use the provided image paths.\n"
+    "You are awakened because an image generation task you initiated earlier has "
+    "completed. The completed task payload is provided in the user message.\n"
+    "# CONTEXT\n"
+    "1. The images already exist and their paths are listed in the payload. Never "
+    "call `generate_image` again for this completed task.\n"
+    "2. `send_message_to_user` is the only channel to the user here: it is the tool "
+    "description's 'proactively message the user' case, so your final reply text is "
+    "not delivered.\n"
+    "3. Decide from the conversation whether the user should see this result now, "
+    "later, or not at all. Staying silent is a valid choice when the images are "
+    "working material for your own next steps, while a failed task is usually worth "
+    "telling the user about.\n"
+    "4. When you do report, send everything the user should see in one call: images "
+    "with type='image' and the given path, wording with type='plain'. Send each "
+    "image at most once.\n"
     "# IMAGE GENERATION TASK CONTEXT\n"
-    "The following JSON object describes the completed image generation task:\n"
-    "{generation_task_result}"
+    "The completed task payload is provided in the user message."
 )
 
 
@@ -50,6 +58,7 @@ class LLMResultHandler:
         context: Context,
         config_manager: ConfigManager,
         task_manager: TaskManager,
+        image_processor: ImageProcessor,
         create_background_task: Callable[
             [Coroutine[Any, Any, Any], str | None], asyncio.Task
         ],
@@ -57,6 +66,7 @@ class LLMResultHandler:
         self.context = context
         self.config_manager = config_manager
         self.task_manager = task_manager
+        self.image_processor = image_processor
         self._create_background_task = create_background_task
 
     def attach_task_wakeup(
@@ -140,9 +150,8 @@ class LLMResultHandler:
             [
                 "",
                 "内部指引:",
-                "- 当前仅表示任务已提交，不能向用户声明图片已完成。",
-                "- 等待插件唤醒并提供最终结果后，再通过 send_message_to_user 发送图片或失败原因。",
-                "- 最终结果到达前，除非上下文确有需要，否则不要主动发送额外消息。",
+                "- 当前仅表示任务已提交，图片尚未完成，不要向用户声明已完成。",
+                "- 结果就绪后会唤醒你并提供图片路径，届时由你判断是否需要发送给用户。",
                 "- 不要重复调用 generate_image。",
             ]
         )
@@ -153,6 +162,7 @@ class LLMResultHandler:
         record: GenerationTaskRecord,
         *,
         supports_image_input: bool,
+        delivery_paths: list[str],
     ) -> dict[str, Any]:
         """Build structured task result context for the awakened AI."""
         request_stats = record.request_stats
@@ -170,7 +180,7 @@ class LLMResultHandler:
             "preset_label": record.preset_label,
             "preset": record.preset or "",
             "result_count": record.result_count,
-            "result_paths": record.result_paths,
+            "result_paths": delivery_paths,
             "request_stats": request_stats,
             "items": [
                 {
@@ -187,8 +197,7 @@ class LLMResultHandler:
             ],
             "error": record.error,
             "message": record.message,
-            "images_attached_to_model": supports_image_input
-            and bool(record.result_paths),
+            "images_attached_to_model": supports_image_input,
         }
         if record.duration_seconds is not None:
             payload["duration_seconds"] = round(record.duration_seconds, 2)
@@ -218,14 +227,71 @@ class LLMResultHandler:
         record: GenerationTaskRecord,
         *,
         reason: str,
-    ) -> None:
-        """Directly send task result if the awakened AI cannot handle it."""
+    ) -> str:
+        """Directly send task result when the wake-up turn could not run.
+
+        Args:
+            record: Completed generation task record.
+            reason: Why the fallback delivery was needed.
+
+        Returns:
+            Plain text of the sent fallback message, or an empty string when
+            nothing was sent.
+
+        """
         logger.warning(
-            f"{log_prefix('Task', record.task_id)} AI 处理生图结果失败，改为直接发送: {safe_log_text(reason, 200)}"
+            f"{log_prefix('Task', record.task_id)} 唤醒轮次未能完成，改为直接发送: {safe_log_text(reason, 200)}"
         )
-        await self.context.send_message(
+        chain = self._build_fallback_chain(record)
+        sent = await self.context.send_message(record.unified_msg_origin, chain)
+        if not sent:
+            return ""
+        # 失败兜底只发文字，此时不能把结果图片记成已送达。
+        self.task_manager.mark_generation_task_delivered(
+            record.task_id,
+            paths=[] if record.error else record.result_paths,
+        )
+        return chain.get_plain_text()
+
+    async def _save_task_note_to_history(
+        self,
+        *,
+        record: GenerationTaskRecord,
+        conversation: Conversation | None,
+        note: str,
+        token_usage: int | None = None,
+    ) -> None:
+        """Append the proactive turn note to the session conversation history.
+
+        The history is re-read right before appending so a user turn that landed
+        while the result was being delivered is not overwritten.
+
+        Args:
+            record: Completed generation task record.
+            conversation: Conversation bound to the proactive turn.
+            note: Assistant note describing the delivered task result.
+            token_usage: Optional total token usage of the proactive turn.
+
+        """
+        if not conversation:
+            return
+        conversation_manager = self.context.conversation_manager
+        latest = await conversation_manager.get_conversation(
             record.unified_msg_origin,
-            self._build_fallback_chain(record),
+            conversation.cid,
+        )
+        try:
+            history = json.loads(getattr(latest, "history", None) or "[]")
+        except (json.JSONDecodeError, TypeError):
+            history = []
+        if not isinstance(history, list):
+            history = []
+        history.append({"role": "assistant", "content": note})
+        await conversation_manager.update_conversation(
+            record.unified_msg_origin,
+            conversation.cid,
+            history=history,
+            token_usage=token_usage,
         )
 
     async def wake_ai_for_generation_task_result(
@@ -261,7 +327,15 @@ class LLMResultHandler:
                 f"{log_prefix('Task', task_id)} 唤醒 AI 处理生图结果异常: {exc}",
                 exc_info=True,
             )
-            await self._send_fallback(record, reason=str(exc))
+            if record.delivered:
+                # The AI already delivered the result before the failure.
+                logger.warning(
+                    f"{log_prefix('Task', task_id)} 结果已发送给用户，跳过兜底发送"
+                )
+                return
+            # 只有唤醒轮次本身异常（AI 没能做出判断）时才兜底直发；
+            # AI 正常结束但选择不发送属于它的判断，不会被兜底。
+            await self._send_fallback(record, reason=f"唤醒轮次异常: {exc}")
 
     async def _run_generation_result_agent(
         self,
@@ -296,14 +370,25 @@ class LLMResultHandler:
         provider_settings = cfg.get("provider_settings", {})
         tool_call_timeout = provider_settings.get("tool_call_timeout", 120)
         provider = self.context.get_using_provider(record.unified_msg_origin)
+        # Failed records may keep audit-blocked images for WebUI review; never
+        # attach them to the model or offer them to the AI for delivery.
+        result_paths = (
+            record.result_paths
+            if record.status == GenerationTaskStatus.SUCCEEDED
+            else []
+        )
         supports_image_input = bool(
             provider
             and "image" in provider.provider_config.get("modalities", [])
-            and record.result_paths
+            and result_paths
         )
+        # 核心发送工具只允许发送会话工作区与 AstrBot 临时目录下的文件，
+        # 持久化目录中的图片需要先映射到临时目录再交给唤醒后的 AI 投递。
+        delivery_paths = self.image_processor.ensure_delivery_paths(result_paths)
         payload = self._build_task_result_payload(
             record,
             supports_image_input=supports_image_input,
+            delivery_paths=delivery_paths,
         )
 
         req = ProviderRequest()
@@ -311,27 +396,19 @@ class LLMResultHandler:
             event=cron_event,
             plugin_context=self.context,
         )
+        # 直接使用真实会话消息作为上下文：把历史压成文本塞进 system prompt 会让
+        # system prompt 每轮都变，provider 的前缀缓存无法复用。
         history_context = json.loads(req.conversation.history or "[]")
         if history_context:
             req.contexts = history_context
-            context_dump = req._print_friendly_context()
-            req.contexts = []
-            req.system_prompt += (
-                "\n\nBellow is you and user previous conversation history:\n"
-                "---\n"
-                f"{context_dump}\n"
-                "---\n"
-            )
 
-        req.system_prompt += IMAGE_GENERATION_TASK_WOKE_SYSTEM_PROMPT.format(
-            generation_task_result=json.dumps(payload, ensure_ascii=False)
-        )
+        req.system_prompt += IMAGE_GENERATION_TASK_WOKE_SYSTEM_PROMPT
         req.prompt = (
             "Proceed according to your system instructions. "
             "Output using same language as previous conversation. "
-            "Use `send_message_to_user` to deliver the image generation result now. "
-            "If the task succeeded, send the generated image file(s) from the provided path(s). "
-            "If it failed, send the error message."
+            "Review the completed image generation task and decide whether the user "
+            "should see the result; deliver it with `send_message_to_user` when they "
+            "should, otherwise end this turn without sending anything."
         )
         req.extra_user_content_parts.append(
             TextPart(
@@ -343,25 +420,30 @@ class LLMResultHandler:
             )
         )
         if supports_image_input:
-            req.image_urls = list(record.result_paths)
+            req.image_urls = list(delivery_paths)
         else:
-            for path in record.result_paths:
+            for path in delivery_paths:
                 req.extra_user_content_parts.append(
                     TextPart(text=f"[Generated image path: {path}]")
                 )
 
+        delivery_tool = DeliverySendMessageToUserTool()
+        # 用插件自己的工具集作为载体，让 build_main_agent 把全量工具合并到这个对象上；
+        # 若这里留空，core 会直接把它的工具集对象赋给 req.func_tool。
         req.func_tool = ToolSet()
-        req.func_tool.add_tool(
-            self.context.get_llm_tool_manager().get_builtin_tool(SendMessageToUserTool)
-        )
+        req.func_tool.add_tool(delivery_tool)
 
+        # 与普通轮一致地继承用户配置：Computer Use 运行时与主动型 Agent 的定时工具。
         config = MainAgentBuildConfig(
             tool_call_timeout=tool_call_timeout,
             llm_safety_mode=False,
             streaming_response=False,
             provider_settings=provider_settings,
-            computer_use_runtime="none",
-            add_cron_tools=False,
+            computer_use_runtime=provider_settings.get("computer_use_runtime", "none"),
+            sandbox_cfg=provider_settings.get("sandbox", {}),
+            add_cron_tools=provider_settings.get("proactive_capability", {}).get(
+                "add_cron_tools", True
+            ),
         )
         result = await build_main_agent(
             event=cron_event,
@@ -375,46 +457,86 @@ class LLMResultHandler:
             await self._send_fallback(record, reason="无法构建主 Agent")
             return
 
-        # build_main_agent merges default tools from persona/plugin settings.
-        # Trim tools before reset so this proactive turn can only deliver results.
-        result.provider_request.func_tool = ToolSet()
-        result.provider_request.func_tool.add_tool(
-            self.context.get_llm_tool_manager().get_builtin_tool(SendMessageToUserTool)
-        )
+        # 唤醒轮保留完整工具集，只把 send_message_to_user 换回带投递记账的变体：
+        # build_main_agent 合并的 persona/插件工具集里有核心的同名工具，会把变体覆盖掉，
+        # 换掉后插件才能确认结果是否真的送达。必须在 await reset_coro 之前完成，
+        # 因为 reset 持有的是同一个 request 对象。
+        result.provider_request.func_tool.add_tool(delivery_tool)
         if result.reset_coro:
             await result.reset_coro
 
-        sent_by_ai = False
         runner = result.agent_runner
-        async for agent_resp in runner.step_until_done(30):
-            if agent_resp.type != "tool_call_result":
-                continue
-            chain = agent_resp.data.get("chain")
-            if not chain:
-                continue
-            content = chain.get_plain_text(with_other_comps_mark=True)
-            if "Message sent to session" in content:
-                sent_by_ai = True
-                break
+        async for _resp in runner.step_until_done(30):
+            # 是否发送、发送什么由 AI 决定，本轮不代它发送任何内容：这里只负责把
+            # 这一轮完整跑完，投递记录由 send_message_to_user 变体自己写入。
+            pass
 
         llm_resp = runner.get_final_llm_resp()
-        if not sent_by_ai:
-            await self._send_fallback(
-                record,
-                reason="AI 未通过 send_message_to_user 发送结果",
+        # 投递是否发生以投递工具自身的记录为准（它只在核心工具真正发送成功后写入）。
+        # 注意 delivered 只说明有内容发出，AI 也可能只发了文字，所以图片是否送达要看
+        # delivered_paths。
+        if delivery_tool.delivered:
+            self.task_manager.mark_generation_task_delivered(
+                record.task_id,
+                paths=delivery_tool.delivered_paths,
+            )
+        else:
+            logger.debug(
+                f"{log_prefix('Task', record.task_id)} 本轮未通过 send_message_to_user "
+                f"投递结果（会话发送标记={cron_event._has_send_oper}）"
             )
 
         summary_note = (
             f"[ImageGenerationTask] task_id={record.task_id}, "
             f"status={record.status.value}, result_count={record.result_count}, "
+            f"delivered={str(record.delivered).lower()}, "
             f"error={record.error or ''}"
         )
+        # 历史 note 统一使用投递路径（AstrBot 临时目录）：这是核心发送工具唯一允许
+        # 发送的位置，持久化目录的路径模型即使拿到也用不了；投递路径是持久化结果的
+        # 同名链接，因此按文件名判断哪些图已经发过。
+        delivered_names = {os.path.basename(path) for path in record.delivered_paths}
+        unsent_paths = [
+            path
+            for path in delivery_paths
+            if os.path.basename(path) not in delivered_names
+        ]
+        if record.delivered_paths:
+            summary_note += (
+                ", delivered_paths="
+                f"{json.dumps(record.delivered_paths, ensure_ascii=False)}. "
+                "These images were already sent to the user; do not send them again."
+            )
+            if unsent_paths:
+                summary_note += (
+                    ", unsent_paths="
+                    f"{json.dumps(unsent_paths, ensure_ascii=False)}. "
+                    "These images were generated but not sent to the user; send them "
+                    "only when the conversation calls for it."
+                )
+        elif cron_event._has_send_oper:
+            # 唤醒轮保留完整工具集，结果也可能由本插件之外的发送工具发出，
+            # 此时记账不完整，不要断言"未发送"以免后续重复发送。
+            summary_note += (
+                ", delivered_paths=unknown. A message already reached the user in this "
+                "turn, but the delivered images could not be recorded; check the "
+                "conversation before sending them again."
+            )
+        elif unsent_paths:
+            summary_note += (
+                ", unsent_paths="
+                f"{json.dumps(unsent_paths, ensure_ascii=False)}. "
+                "These images were generated but not sent to the user; send them only "
+                "when the conversation calls for it."
+            )
         if llm_resp and llm_resp.completion_text:
             summary_note += f" AI response: {llm_resp.completion_text}"
         with suppress(Exception):
-            await persist_agent_history(
-                self.context.conversation_manager,
-                event=cron_event,
-                req=req,
-                summary_note=summary_note,
+            await self._save_task_note_to_history(
+                record=record,
+                conversation=req.conversation,
+                note=summary_note,
+                token_usage=llm_resp.usage.total
+                if llm_resp and llm_resp.usage
+                else None,
             )

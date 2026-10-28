@@ -2,23 +2,25 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import ntpath
 import os
 import posixpath
 import re
+import shutil
 import time
 from collections.abc import Iterable
 from io import BytesIO
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlparse
 
-from PIL import Image, UnidentifiedImageError
-
 import astrbot.api.message_components as Comp
 from astrbot.api import logger
 from astrbot.core.utils.astrbot_path import get_astrbot_workspaces_path
 from astrbot.core.utils.io import download_image_by_url
+from PIL import Image, UnidentifiedImageError
 
 from ..shared.logging import (
     log_prefix,
@@ -83,7 +85,61 @@ class ImageProcessor:
         if allowed_local_base_dirs:
             base_dirs.extend(allowed_local_base_dirs)
         self._allowed_local_base_dirs = self._normalize_allowed_base_dirs(base_dirs)
+        self._persist_enabled = False
+        self._persist_dir = ""
+        self._persist_limit = 0
+        self._generated_dir = self._temp_dir
         os.makedirs(self._temp_dir, exist_ok=True)
+
+    def configure_generated_output(
+        self,
+        *,
+        enabled: bool,
+        persist_dir: str | os.PathLike[str] | None,
+        limit: int,
+    ) -> None:
+        """Configure where generated images are stored and how many are kept.
+
+        Args:
+            enabled: Whether to persist generated images outside the temp dir.
+            persist_dir: Plugin data directory used when persistence is enabled.
+            limit: Maximum number of persisted images to keep; ``0`` means
+                unlimited.
+        """
+        self._persist_enabled = bool(enabled and persist_dir)
+        self._persist_limit = max(0, int(limit or 0))
+        if self._persist_enabled:
+            self._persist_dir = os.path.realpath(str(persist_dir))
+            os.makedirs(self._persist_dir, exist_ok=True)
+            self._allowed_local_base_dirs = self._normalize_allowed_base_dirs(
+                (*self._allowed_local_base_dirs, self._persist_dir)
+            )
+            self._prune_persisted_images()
+        else:
+            self._persist_dir = ""
+        self._generated_dir = self._persist_dir or self._temp_dir
+
+    def _prune_persisted_images(self) -> None:
+        """Delete the oldest persisted images beyond the configured limit."""
+        if not self._persist_enabled or self._persist_limit <= 0:
+            return
+        try:
+            entries = [
+                entry
+                for entry in os.scandir(self._persist_dir)
+                if entry.is_file() and entry.name.startswith("gen_")
+            ]
+        except OSError as exc:
+            logger.warning(f"{LOG} 读取持久化图片目录失败: {safe_log_error_body(exc)}")
+            return
+        if len(entries) <= self._persist_limit:
+            return
+        entries.sort(key=lambda entry: entry.stat().st_mtime)
+        for entry in entries[: len(entries) - self._persist_limit]:
+            try:
+                os.remove(entry.path)
+            except OSError as exc:
+                logger.warning(f"{LOG} 清理持久化图片失败: {safe_log_error_body(exc)}")
 
     def update_settings(self, max_image_size_mb: int | None = None) -> None:
         """Update runtime image processing settings."""
@@ -148,8 +204,20 @@ class ImageProcessor:
         value: str,
         *,
         workspace_dir: str | None = None,
+        trusted_source: bool = False,
     ) -> str | None:
-        """Resolve a safe local image path inside workspace/temp/plugin data dirs."""
+        """Resolve a local image path.
+
+        Args:
+            value: Local path or ``file://`` URI to resolve.
+            workspace_dir: Session workspace root used for relative paths.
+            trusted_source: Whether the value comes from the framework message
+                chain. Those images were already accepted by the framework, so
+                the allowed directory roots are not enforced for them.
+
+        Returns:
+            The resolved file path, or ``None`` when it is not a readable file.
+        """
         value = self._normalize_local_path_value(value)
         if not value:
             return None
@@ -162,11 +230,13 @@ class ImageProcessor:
         ):
             return None
 
-        allowed_base_dirs = self._allowed_local_base_dirs
-        if workspace_dir:
-            allowed_base_dirs = self._normalize_allowed_base_dirs(
-                (*allowed_base_dirs, workspace_dir)
-            )
+        allowed_base_dirs: tuple[str, ...] = ()
+        if not trusted_source:
+            allowed_base_dirs = self._allowed_local_base_dirs
+            if workspace_dir:
+                allowed_base_dirs = self._normalize_allowed_base_dirs(
+                    (*allowed_base_dirs, workspace_dir)
+                )
         candidates: list[str] = []
         if self._is_absolute_path(value):
             candidates.append(value)
@@ -177,7 +247,9 @@ class ImageProcessor:
 
         for candidate in candidates:
             path = os.path.realpath(candidate)
-            if not self._is_path_within_allowed_dirs(path, allowed_base_dirs):
+            if not trusted_source and not self._is_path_within_allowed_dirs(
+                path, allowed_base_dirs
+            ):
                 logger.warning(
                     f"{LOG} 本地参考图路径不在允许目录内: {safe_log_url(path)}"
                 )
@@ -223,8 +295,20 @@ class ImageProcessor:
         url: str,
         *,
         workspace_dir: str | None = None,
+        trusted_source: bool = False,
     ) -> ImageData | None:
-        """Download or read an image and return normalized image data."""
+        """Download or read an image and return normalized image data.
+
+        Args:
+            url: Network URL, Data URL, ``base64://`` payload, or local path.
+            workspace_dir: Session workspace root used for relative paths.
+            trusted_source: Whether the reference comes from the framework
+                message chain. Such images are accepted as-is instead of being
+                restricted to the allowed local base directories.
+
+        Returns:
+            The normalized image data, or ``None`` when it cannot be used.
+        """
         try:
             url = url.strip()
             if not url:
@@ -232,7 +316,21 @@ class ImageProcessor:
 
             data: bytes | None = None
             source_url = url if self._is_network_url(url) else None
-            if local_path := self._resolve_local_path(url, workspace_dir=workspace_dir):
+            if url.lower().startswith("data:image/"):
+                data = self._decode_data_image_url(url)
+                if data is None:
+                    return None
+                source_url = None
+            elif url.lower().startswith("base64://"):
+                data = self._decode_base64_payload(url[len("base64://") :])
+                if data is None:
+                    return None
+                source_url = None
+            elif local_path := self._resolve_local_path(
+                url,
+                workspace_dir=workspace_dir,
+                trusted_source=trusted_source,
+            ):
                 source_url = None
                 with open(local_path, "rb") as f:
                     data = f.read()
@@ -243,6 +341,7 @@ class ImageProcessor:
                 # Use the plugin temporary directory for downloaded references.
                 file_name = f"ref_{hashlib.md5(url.encode()).hexdigest()[:10]}"
                 path = os.path.join(self._temp_dir, file_name)
+                os.makedirs(self._temp_dir, exist_ok=True)
                 path = await download_image_by_url(url, path=path)
                 if path:
                     with open(path, "rb") as f:
@@ -265,6 +364,32 @@ class ImageProcessor:
                 f"{LOG} 获取图片失败: {safe_log_url(url)} ({safe_log_error_body(exc)})"
             )
         return None
+
+    def _decode_data_image_url(self, url: str) -> bytes | None:
+        """Decode a size-limited ``data:image/...;base64`` payload."""
+        header, separator, payload = url.partition(",")
+        declared_mime = header[5:].split(";", 1)[0].lower()
+        if (
+            not separator
+            or ";base64" not in header.lower()
+            or declared_mime not in ALLOWED_IMAGE_MIME_TYPES
+        ):
+            logger.warning(f"{LOG} 不支持的图片 Data URL")
+            return None
+        return self._decode_base64_payload(payload)
+
+    def _decode_base64_payload(self, payload: str) -> bytes | None:
+        """Decode one image payload without accepting oversized input."""
+        max_bytes = self._max_image_size_mb * 1024 * 1024
+        max_encoded_length = ((max_bytes + 2) // 3) * 4 + 8
+        if len(payload) > max_encoded_length:
+            logger.warning(f"{LOG} 图片超过大小限制 ({self._max_image_size_mb}MB)")
+            return None
+        try:
+            return base64.b64decode(payload, validate=True)
+        except (binascii.Error, ValueError):
+            logger.warning(f"{LOG} 图片 Base64 无效")
+            return None
 
     def validate_image_data(
         self,
@@ -319,6 +444,7 @@ class ImageProcessor:
         try:
             file_name = f"avatar_{user_id}.jpg"
             path = os.path.join(self._temp_dir, file_name)
+            os.makedirs(self._temp_dir, exist_ok=True)
             path = await download_image_by_url(url, path=path)
             if path:
                 with open(path, "rb") as f:
@@ -372,6 +498,65 @@ class ImageProcessor:
 
         return str(leading_component.qq).strip() == bot_self_id
 
+    def collect_event_image_urls(self, event: AstrMessageEvent) -> list[str]:
+        """Return deduplicated image URLs from the current and replied message chain."""
+        references: list[str] = []
+        if not event.message_obj or not event.message_obj.message:
+            return references
+
+        components = list(event.message_obj.message)
+        for component in components:
+            image_components = []
+            if isinstance(component, Comp.Image):
+                image_components.append(component)
+            elif isinstance(component, Comp.Reply) and component.chain:
+                image_components.extend(
+                    sub_comp
+                    for sub_comp in component.chain
+                    if isinstance(sub_comp, Comp.Image)
+                )
+            for image_component in image_components:
+                url = image_component.url or image_component.file
+                if url and str(url).strip():
+                    references.append(str(url).strip())
+        return list(dict.fromkeys(references))
+
+    def collect_direct_event_image_urls(self, event: AstrMessageEvent) -> list[str]:
+        """Return image URLs attached directly to the current message."""
+        references: list[str] = []
+        if not event.message_obj or not event.message_obj.message:
+            return references
+
+        for component in event.message_obj.message:
+            if not isinstance(component, Comp.Image):
+                continue
+            url = component.url or component.file
+            if url and str(url).strip():
+                references.append(str(url).strip())
+        return list(dict.fromkeys(references))
+
+    async def fetch_message_images_from_event(
+        self,
+        event: AstrMessageEvent,
+    ) -> list[ImageData]:
+        """Download images attached to the current message and its replies.
+
+        Mentioned-user avatars are intentionally excluded. Callers that want
+        avatars collect them through explicit avatar references.
+        """
+        images_data: list[ImageData] = []
+        workspace_dir = self.workspace_dir_for_origin(
+            getattr(event, "unified_msg_origin", None)
+        )
+        for reference in self.collect_event_image_urls(event):
+            if image := await self.download_image(
+                reference,
+                workspace_dir=workspace_dir,
+                trusted_source=True,
+            ):
+                images_data.append(image)
+        return images_data
+
     async def fetch_images_from_event(
         self,
         event: AstrMessageEvent,
@@ -404,6 +589,7 @@ class ImageProcessor:
                         data := await self.download_image(
                             url,
                             workspace_dir=workspace_dir,
+                            trusted_source=True,
                         )
                     ):
                         images_data.append(data)
@@ -417,6 +603,7 @@ class ImageProcessor:
                                     data := await self.download_image(
                                         url,
                                         workspace_dir=workspace_dir,
+                                        trusted_source=True,
                                     )
                                 ):
                                     images_data.append(data)
@@ -447,17 +634,80 @@ class ImageProcessor:
         return images_data
 
     def save_generated_image(self, task_id: str, img_bytes: bytes) -> str | None:
-        """Save generated image bytes to the temporary directory."""
+        """Save generated image bytes to the configured output directory."""
         try:
             mime = self._detect_mime_type(img_bytes)
             extension = GENERATED_IMAGE_EXTENSIONS.get(mime, ".png")
             file_name = f"gen_{task_id}_{int(time.time())}_{hashlib.md5(img_bytes).hexdigest()[:6]}{extension}"
-            file_path = os.path.join(self._temp_dir, file_name)
-            with open(file_path, "wb") as f:
-                f.write(img_bytes)
+            target_dir = self._generated_dir
+            try:
+                os.makedirs(target_dir, exist_ok=True)
+                file_path = os.path.join(target_dir, file_name)
+                with open(file_path, "wb") as f:
+                    f.write(img_bytes)
+            except OSError as exc:
+                if target_dir == self._temp_dir:
+                    raise
+                logger.warning(
+                    f"{LOG} 持久化目录不可写，回退到临时目录: {safe_log_error_body(exc)}"
+                )
+                target_dir = self._temp_dir
+                os.makedirs(target_dir, exist_ok=True)
+                file_path = os.path.join(target_dir, file_name)
+                with open(file_path, "wb") as f:
+                    f.write(img_bytes)
+            if target_dir == self._persist_dir:
+                self._prune_persisted_images()
             return file_path
         except Exception as exc:
             logger.error(
                 f"{LOG} 保存图片失败: {safe_log_error_body(exc)}", exc_info=True
             )
             return None
+
+    def ensure_delivery_paths(self, paths: Iterable[str]) -> list[str]:
+        """Return result paths the core send tool is allowed to deliver.
+
+        Core restricts local file sending to the session workspace, the AstrBot
+        temp directory and the system temp directory. Persisted images live in
+        the plugin data directory and are rejected by that check, so a
+        same-named link is created inside the plugin temp directory and handed
+        out for delivery instead.
+
+        Args:
+            paths: Result image paths or URLs recorded by a task.
+
+        Returns:
+            Delivery paths. Persistent local files are replaced by their temp
+            link, other entries are returned unchanged.
+        """
+        temp_root = os.path.normcase(self._temp_dir)
+        delivery_paths: list[str] = []
+        for raw_path in paths:
+            path = str(raw_path or "").strip()
+            if not path:
+                continue
+            local_path = os.path.realpath(path) if os.path.isfile(path) else ""
+            if not local_path or os.path.normcase(local_path).startswith(
+                temp_root + os.sep
+            ):
+                delivery_paths.append(path)
+                continue
+            target = os.path.join(self._temp_dir, os.path.basename(local_path))
+            try:
+                if os.path.exists(target) and not os.path.samefile(target, local_path):
+                    os.remove(target)
+                if not os.path.exists(target):
+                    try:
+                        # A hardlink avoids a second copy on the same volume.
+                        os.link(local_path, target)
+                    except OSError:
+                        shutil.copy2(local_path, target)
+            except OSError as exc:
+                logger.warning(
+                    f"{LOG} 创建投递副本失败，回退为原路径: {safe_log_error_body(exc)}"
+                )
+                delivery_paths.append(path)
+                continue
+            delivery_paths.append(target)
+        return delivery_paths

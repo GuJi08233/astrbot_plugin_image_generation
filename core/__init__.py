@@ -36,7 +36,6 @@ from .shared.constants import (
     GEMINI_DEFAULT_BASE_URL,
     GEMINI_SAFETY_CATEGORIES,
     GITEE_AI_DEFAULT_BASE_URL,
-    JIMENG_DEFAULT_BASE_URL,
     LOG_PREFIX,
     OPENAI_DEFAULT_BASE_URL,
     RESOLUTION_1K_MAP,
@@ -54,7 +53,6 @@ from .shared.logging import (
 )
 from .shared.types import (
     AdapterConfig,
-    AdapterMetadata,
     AdapterType,
     GenerationRequest,
     GenerationResult,
@@ -72,7 +70,8 @@ from .tasks.models import (
 from .tasks.store import GenerationTaskStore
 from .tasks.usage import UsageManager
 
-__all__ = [
+# Grouped by role on purpose; alphabetical order would lose the grouping.
+__all__ = [  # noqa: RUF022
     # Base classes and core components.
     "BaseImageAdapter",
     "ImageGenerator",
@@ -98,7 +97,6 @@ __all__ = [
     "SafetyAuditor",
     # Data types.
     "AdapterConfig",
-    "AdapterMetadata",
     "AdapterType",
     "GenerationRequest",
     "GenerationResult",
@@ -132,7 +130,6 @@ __all__ = [
     "GEMINI_SAFETY_CATEGORIES",
     "OPENAI_DEFAULT_BASE_URL",
     "GITEE_AI_DEFAULT_BASE_URL",
-    "JIMENG_DEFAULT_BASE_URL",
     "RESOLUTION_1K_MAP",
     "RESOLUTION_2K_MAP",
     "SUPPORTED_ASPECT_RATIOS",

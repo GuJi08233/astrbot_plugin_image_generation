@@ -4,7 +4,6 @@ import base64
 import time
 
 import aiohttp
-
 from astrbot.api import logger
 
 from ..core.adapters.base import BaseImageAdapter
@@ -60,10 +59,8 @@ class GeminiAdapter(BaseImageAdapter):
         ):
             image_config["aspectRatio"] = request.aspect_ratio
 
-        if (
-            request.resolution
-            and request.resolution != UNSPECIFIED_OPTION
-            and "gemini-3" in self.model.lower()
+        if request.resolution in {"1K", "2K", "4K"} and (
+            "gemini-3" in self.model.lower()
         ):
             image_config["imageSize"] = request.resolution
 

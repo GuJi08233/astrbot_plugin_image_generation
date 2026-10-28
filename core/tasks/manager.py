@@ -12,6 +12,17 @@ from ..shared.constants import (
     DEFAULT_ENABLE_GENERATION_TASK_HISTORY,
     DEFAULT_GENERATION_TASK_HISTORY_LIMIT,
     DEFAULT_GENERATION_TASK_HISTORY_RETENTION_DAYS,
+    TASK_ERROR_MAX_CHARS,
+    TASK_ITEM_ERROR_MAX_CHARS,
+)
+from ..shared.logging import (
+    format_log_event,
+    format_optional,
+    format_seconds,
+    log_prefix,
+    mask_sensitive,
+    safe_log_error_body,
+    safe_log_text,
 )
 from .models import (
     ACTIVE_GENERATION_ITEM_STATUSES,
@@ -25,22 +36,12 @@ from .models import (
     GenerationTaskStatus,
     coerce_generation_item_status,
 )
-from .store import GenerationTaskStore
 from .runtime import (
     BackgroundTaskMixin,
     GenerationQueueRunnerMixin,
     GenerationTaskNotifierMixin,
-    TaskSchedulerMixin,
 )
-from ..shared.logging import (
-    format_log_event,
-    format_optional,
-    format_seconds,
-    log_prefix,
-    mask_sensitive,
-    safe_log_error_body,
-    safe_log_text,
-)
+from .store import GenerationTaskStore
 
 LOG = log_prefix("TaskManager")
 
@@ -87,9 +88,8 @@ class TaskManager(
     BackgroundTaskMixin,
     GenerationQueueRunnerMixin,
     GenerationTaskNotifierMixin,
-    TaskSchedulerMixin,
 ):
-    """Unified task manager for background, scheduled, and generation tasks."""
+    """Unified task manager for background and generation tasks."""
 
     def __init__(
         self,
@@ -100,13 +100,6 @@ class TaskManager(
         persistence_file: str | Path | None = None,
     ):
         self.background_tasks: set[asyncio.Task] = set()
-        self._loop_tasks: dict[str, asyncio.Task] = {}
-        self._daily_tasks: dict[str, asyncio.Task] = {}
-        self._last_run_dates: dict[str, str] = {}
-        self._startup_tasks: list[
-            tuple[str, Callable[[], Coroutine[Any, Any, Any]]]
-        ] = []
-        self._startup_completed: bool = False
         self._generation_tasks: dict[str, GenerationTaskRecord] = {}
         self._generation_terminal_callbacks: dict[
             str, list[GenerationTaskCallback]
@@ -183,6 +176,7 @@ class TaskManager(
         preset_label: str = "预设",
         usage_scope: str = "",
         reserved_count: int = 0,
+        quota_date: str = "",
         is_usage_limit_admin: bool = False,
         terminal_callback: GenerationTaskCallback | None = None,
     ) -> GenerationTaskRecord:
@@ -220,6 +214,7 @@ class TaskManager(
                 for index in range(1, safe_requested_count + 1)
             },
             usage_scope=usage_scope,
+            quota_date=str(quota_date or "").strip(),
             reserved_count=max(0, reserved_count),
             is_usage_limit_admin=bool(is_usage_limit_admin),
         )
@@ -243,8 +238,13 @@ class TaskManager(
         )
         return record
 
-    def load_generation_history(self) -> None:
-        """Load persisted generation task history from disk."""
+    def load_generation_history(self, usage_manager: Any | None = None) -> None:
+        """Load persisted generation task history from disk.
+
+        Args:
+            usage_manager: Optional quota manager. When provided, unsettled
+                reservations are restored before interrupted tasks are closed.
+        """
         if not self._enable_generation_task_history:
             logger.debug(f"{LOG} 生图任务历史持久化已关闭，跳过加载")
             return
@@ -254,7 +254,10 @@ class TaskManager(
         restored_tasks: dict[str, GenerationTaskRecord] = {}
         history_changed = False
         now = datetime.now()
-        for record in self._generation_store.load():
+        loaded_records = self._generation_store.load()
+        if usage_manager is not None:
+            history_changed = bool(usage_manager.restore_reservations(loaded_records))
+        for record in loaded_records:
             if record.status in ACTIVE_GENERATION_STATUSES:
                 record.status = GenerationTaskStatus.CANCELLED
                 record.message = "插件重启导致任务中断"
@@ -265,6 +268,24 @@ class TaskManager(
                     status=GenerationTaskItemStatus.CANCELLED,
                     error=record.error,
                 )
+                if (
+                    usage_manager is not None
+                    and record.usage_scope
+                    and not record.quota_settled
+                    and not record.quota_released
+                ):
+                    # restore_reservations() reserved quota for this active task.
+                    # The task cannot resume after a restart, so settle the
+                    # images it produced and release the unused reservation.
+                    usage_manager.settle_usage(
+                        record.usage_scope,
+                        is_admin=record.is_usage_limit_admin,
+                        reserved_count=record.reserved_count,
+                        actual_count=record.result_count or len(record.result_paths),
+                        quota_date=record.quota_date,
+                    )
+                    record.quota_settled = True
+                    record.quota_released = True
                 history_changed = True
             restored_tasks[record.task_id] = record
 
@@ -283,10 +304,6 @@ class TaskManager(
         if history_changed:
             self._save_generation_tasks()
         logger.info(f"{LOG} 已加载生图任务历史: {len(self._generation_tasks)} 条")
-
-    def flush_generation_history(self) -> None:
-        """Persist the current generation task history immediately."""
-        self._save_generation_tasks()
 
     def configure_generation_history(
         self,
@@ -354,7 +371,15 @@ class TaskManager(
         error: str = "",
     ) -> None:
         """Mark pending or running sub-requests with a final item status."""
-        safe_error = safe_log_error_body(error, 200) if error else ""
+        safe_error = (
+            safe_log_error_body(
+                error,
+                TASK_ITEM_ERROR_MAX_CHARS,
+                field_limit=TASK_ITEM_ERROR_MAX_CHARS,
+            )
+            if error
+            else ""
+        )
         for item in record.items.values():
             if item.status not in ACTIVE_GENERATION_ITEM_STATUSES:
                 continue
@@ -381,7 +406,15 @@ class TaskManager(
         record.status = status
         record.finished_at = record.finished_at or datetime.now()
         record.message = safe_log_error_body(message, 300)
-        record.error = safe_log_error_body(error, 300) if error else ""
+        record.error = (
+            safe_log_error_body(
+                error,
+                TASK_ERROR_MAX_CHARS,
+                field_limit=TASK_ERROR_MAX_CHARS,
+            )
+            if error
+            else ""
+        )
         if result_paths is not None:
             record.result_paths = list(result_paths)
         if audit_results is not None:
@@ -481,7 +514,15 @@ class TaskManager(
         )
         item.status = self._safe_generation_item_status(status)
         item.result_count = max(0, result_count)
-        item.error = safe_log_error_body(error, 200) if error else ""
+        item.error = (
+            safe_log_error_body(
+                error,
+                TASK_ITEM_ERROR_MAX_CHARS,
+                field_limit=TASK_ITEM_ERROR_MAX_CHARS,
+            )
+            if error
+            else ""
+        )
 
     def update_generation_task_progress(
         self,
@@ -521,6 +562,35 @@ class TaskManager(
         record.status = GenerationTaskStatus.CANCELLING
         record.message = message
         return True
+
+    def mark_generation_task_delivered(
+        self,
+        task_id: str,
+        *,
+        paths: list[str] | None = None,
+    ) -> GenerationTaskRecord | None:
+        """Record that a finished task result has reached the user.
+
+        Args:
+            task_id: Generation task ID whose result was delivered.
+            paths: Image paths delivered to the user. Defaults to the task result
+                paths so successful tasks keep a delivery trail.
+
+        Returns:
+            The updated record, or ``None`` when the task is unknown.
+
+        """
+        record = self._generation_tasks.get(task_id)
+        if not record:
+            return None
+        record.delivered = True
+        record.delivered_at = record.delivered_at or datetime.now()
+        delivered_paths = record.result_paths if paths is None else paths
+        for path in delivered_paths:
+            if path not in record.delivered_paths:
+                record.delivered_paths.append(path)
+        self._save_generation_tasks()
+        return record
 
     def mark_generation_task_succeeded(
         self,
@@ -577,6 +647,10 @@ class TaskManager(
             f"{log_prefix('Task', task_id)} "
             + format_log_event("任务失败", 摘要=_task_failure_summary(record))
         )
+        if record.error:
+            # The summary line is capped for readability; log the retained error
+            # separately so the log alone is enough to diagnose the failure.
+            logger.warning(f"{log_prefix('Task', task_id)} 错误详情: {record.error}")
         self._save_generation_tasks()
         self._notify_generation_task_terminal(task_id)
 

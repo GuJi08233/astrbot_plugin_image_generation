@@ -52,7 +52,7 @@
           },
           "available_models": {
             "description": "可用模型列表",
-            "hint": "用于 /生图模型 命令切换；请按账号实际可用模型维护。",
+            "hint": "用于 /生图模型 切换；请按账号实际可用模型维护。",
             "type": "list",
             "default": [
               "gemini-3-pro-image-preview",
@@ -132,7 +132,7 @@
           },
           "available_models": {
             "description": "可用模型列表",
-            "hint": "用于 /生图模型 命令切换。",
+            "hint": "用于 /生图模型 切换。",
             "type": "list",
             "default": [
               "gpt-4o-image",
@@ -250,14 +250,12 @@
           },
           "available_models": {
             "description": "可用模型列表",
-            "hint": "用于 /生图模型 命令切换；请按账号实际可用模型维护。",
+            "hint": "用于 /生图模型 切换；请按账号实际可用模型维护。",
             "type": "list",
             "default": [
-              "gpt-image-2",
-              "gpt-image-1.5",
-              "gpt-image-1",
-              "gpt-image-1-mini",
-              "dall-e-3"
+              "gpt-image-2.5-sunburst",
+              "gpt-image-2.5-flare",
+              "gpt-image-2"
             ]
           },
           "capability_options": {
@@ -273,7 +271,8 @@
             "default": [
               "文生图",
               "图生图",
-              "宽高比"
+              "宽高比",
+              "分辨率"
             ]
           },
           "timeout": {
@@ -314,17 +313,6 @@
             ],
             "default": "prompt"
           },
-          "model_family": {
-            "description": "模型系列",
-            "hint": "影响 OpenAI 请求格式。auto 会按模型名自动识别 gpt-image 或 dall-e 系列。",
-            "type": "string",
-            "options": [
-              "auto",
-              "gpt-image",
-              "dall-e"
-            ],
-            "default": "auto"
-          },
           "enable_streaming": {
             "description": "使用 SSE 流式请求",
             "hint": "文生图默认开启 SSE。部分兼容站点不支持流式时可关闭，改为普通 JSON 响应。",
@@ -333,7 +321,7 @@
           },
           "output_format": {
             "description": "GPT Image 输出格式",
-            "hint": "PNG 保留无损质量；JPEG 响应更小，适合会截断大型 Base64 响应的中转接口。仅影响 GPT Image 系列。",
+            "hint": "PNG 保留无损质量；JPEG 响应更小，适合会截断大型 Base64 响应的中转接口。",
             "type": "string",
             "options": [
               "png",
@@ -531,7 +519,7 @@
       },
       "volcengine_ark": {
         "name": "火山方舟接口",
-        "hint": "调用火山方舟图像接口 /api/v3/images/generations。",
+        "hint": "调用火山方舟图像接口，可选择标准 API 或 Agent Plan。",
         "display_item": "name",
         "hide_hint_in_list": true,
         "items": {
@@ -543,9 +531,19 @@
           },
           "base_url": {
             "description": "接口地址",
-            "hint": "默认使用 https://ark.cn-beijing.volces.com；也可填写包含 /api/v3 的完整地址。",
+            "hint": "默认 https://ark.cn-beijing.volces.com；插件会按接口模式自动补全路径。",
             "type": "string",
             "default": "https://ark.cn-beijing.volces.com"
+          },
+          "api_mode": {
+            "description": "接口模式",
+            "hint": "api 为标准 API；agent_plan 为 Agent Plan 专属接口，需专属 API Key 和套餐支持的模型。",
+            "type": "string",
+            "options": [
+              "api",
+              "agent_plan"
+            ],
+            "default": "api"
           },
           "proxy": {
             "description": "代理地址",
@@ -561,13 +559,12 @@
           },
           "available_models": {
             "description": "可用模型列表",
-            "hint": "用于 /生图模型 命令切换；请按控制台实际模型 ID 或 Endpoint ID 维护。Seedream 5.0 Pro 不支持组图与联网搜索，参考图最多 10 张。",
+            "hint": "用于 /生图模型 切换；Agent Plan 请填写套餐支持的模型，如 doubao-seedream-5.0-pro。",
             "type": "list",
             "default": [
               "doubao-seedream-5-0-pro-260628",
-              "doubao-seedream-5-0-260128",
-              "doubao-seedream-4-5-251128",
-              "doubao-seedream-4-0-250828"
+              "doubao-seedream-5-0-flash-260915",
+              "doubao-seedream-5.0-pro"
             ]
           },
           "capability_options": {
@@ -613,43 +610,22 @@
             "description": "添加水印",
             "hint": "开启后在图片右下角添加“AI 生成”水印。",
             "type": "bool",
-            "default": true
+            "default": false
           },
-          "sequential_image_generation": {
-            "description": "组图模式",
-            "hint": "auto 允许模型按提示词生成组图；disabled 仅生成单图。Seedream 5.0 Pro 不支持组图，请求中不会发送该参数。",
+          "output_format": {
+            "description": "输出格式",
+            "hint": "留空由接口默认使用 jpeg。",
             "type": "string",
             "options": [
-              "disabled",
-              "auto"
+              "",
+              "png",
+              "jpeg"
             ],
-            "default": "disabled"
-          },
-          "sequential_max_images": {
-            "description": "组图最大生成张数",
-            "hint": "仅组图模式为 auto 时生效；参考图数量与生成图数量合计不能超过 15。Seedream 5.0 Pro 不支持组图。",
-            "type": "int",
-            "slider": {
-              "min": 1,
-              "max": 15,
-              "step": 1
-            },
-            "default": 15
-          },
-          "max_reference_images": {
-            "description": "最大参考图数量",
-            "hint": "限制单次请求可使用的参考图数量。非 Pro 最高 14 张；Seedream 5.0 Pro 最高 10 张。",
-            "type": "int",
-            "slider": {
-              "min": 1,
-              "max": 14,
-              "step": 1
-            },
-            "default": 14
+            "default": ""
           },
           "optimize_prompt_mode": {
             "description": "提示词优化模式",
-            "hint": "standard 质量更高但耗时较长；fast 更快但质量较低；留空则不发送。",
+            "hint": "standard 质量更高；fast 更快，仅 Pro 支持，Flash 会按 standard 发送；留空不发送。",
             "type": "string",
             "options": [
               "",
@@ -657,12 +633,6 @@
               "fast"
             ],
             "default": ""
-          },
-          "enable_web_search": {
-            "description": "启用联网搜索",
-            "hint": "仅 Seedream 5.0 lite 等支持；Seedream 5.0 Pro 不支持，开启也不会发送。",
-            "type": "bool",
-            "default": false
           }
         }
       },
@@ -698,7 +668,7 @@
           },
           "available_models": {
             "description": "可用模型列表",
-            "hint": "用于 /生图模型 命令切换；请按账号实际可用模型维护。",
+            "hint": "用于 /生图模型 切换；请按账号实际可用模型维护。",
             "type": "list",
             "default": [
               "Kwai-Kolors/Kolors",
@@ -803,7 +773,7 @@
           },
           "available_models": {
             "description": "可用模型列表",
-            "hint": "用于 /生图模型 命令切换；请按账号实际可用模型维护。自动接口模式会按模型与参考图选择生成或编辑接口。",
+            "hint": "用于 /生图模型 切换；请按账号实际可用模型维护。自动接口模式会按模型与参考图选择生成或编辑接口。",
             "type": "list",
             "default": [
               "FLUX.1-dev",
@@ -897,9 +867,19 @@
           },
           "base_url": {
             "description": "接口地址",
-            "hint": "可选。留空使用 https://apihub.agnes-ai.com；也可填写兼容接口地址。",
+            "hint": "可选。留空时按接口区域使用默认地址；填写后优先使用此处地址。",
             "type": "string",
             "default": ""
+          },
+          "api_region": {
+            "description": "接口区域",
+            "hint": "international 使用 https://apihub.agnes-ai.com；china 使用 https://api.agnes-ai.cn。API Key 按区域区分。",
+            "type": "string",
+            "options": [
+              "international",
+              "china"
+            ],
+            "default": "international"
           },
           "proxy": {
             "description": "代理地址",
@@ -915,11 +895,12 @@
           },
           "available_models": {
             "description": "可用模型列表",
-            "hint": "用于 /生图模型 命令切换；请按账号实际可用模型维护。",
+            "hint": "用于 /生图模型 切换；请按账号实际可用模型维护。",
             "type": "list",
             "default": [
               "agnes-image-2.0-flash",
-              "agnes-image-2.1-flash"
+              "agnes-image-2.1-flash",
+              "agnes-image-2.5-flash"
             ]
           },
           "response_format": {
@@ -934,87 +915,7 @@
           },
           "capability_options": {
             "description": "模型能力",
-            "hint": "按模型实际能力勾选；宽高比会映射为 size 字段，不会发送 aspect_ratio。",
-            "type": "list",
-            "options": [
-              "文生图",
-              "图生图",
-              "宽高比",
-              "分辨率"
-            ],
-            "default": [
-              "文生图",
-              "图生图",
-              "宽高比",
-              "分辨率"
-            ]
-          },
-          "timeout": {
-            "description": "超时时间覆盖（秒）",
-            "hint": "填 0 表示使用“运行控制”中的超时时间。",
-            "type": "int",
-            "slider": {
-              "min": 0,
-              "max": 600,
-              "step": 10
-            },
-            "default": 0
-          },
-          "max_retry_attempts": {
-            "description": "重试次数覆盖",
-            "hint": "填 0 表示使用“运行控制”中的重试次数。",
-            "type": "int",
-            "slider": {
-              "min": 0,
-              "max": 10,
-              "step": 1
-            },
-            "default": 0
-          }
-        }
-      },
-      "jimeng2api": {
-        "name": "即梦逆向接口",
-        "hint": "调用 jimeng-api 图像接口 /v1/images/generations、/v1/images/compositions。",
-        "display_item": "name",
-        "hide_hint_in_list": true,
-        "items": {
-          "name": {
-            "description": "供应商名称",
-            "hint": "用于显示和模型选择；格式为“供应商名称/模型名称”。",
-            "type": "string",
-            "default": ""
-          },
-          "base_url": {
-            "description": "接口地址",
-            "hint": "填写 jimeng-api 服务地址。",
-            "type": "string",
-            "default": ""
-          },
-          "proxy": {
-            "description": "代理地址",
-            "hint": "可选，示例：http://127.0.0.1:7890。",
-            "type": "string",
-            "default": ""
-          },
-          "api_keys": {
-            "description": "API 密钥",
-            "hint": "如服务启用了鉴权，请填写访问密钥；可配置多个用于轮换。",
-            "type": "list",
-            "default": []
-          },
-          "available_models": {
-            "description": "可用模型列表",
-            "hint": "用于 /生图模型 命令切换；请按服务实际支持模型维护。",
-            "type": "list",
-            "default": [
-              "jimeng-4.5",
-              "nanobanana"
-            ]
-          },
-          "capability_options": {
-            "description": "模型能力",
-            "hint": "按当前模型实际能力勾选；未勾选的能力不会在请求中使用。",
+            "hint": "按模型实际能力勾选。2.1/2.5 使用 size 档位 + ratio；2.0 将宽高比映射为像素 size。",
             "type": "list",
             "options": [
               "文生图",
@@ -1085,7 +986,7 @@
           },
           "available_models": {
             "description": "可用模型列表",
-            "hint": "用于 /生图模型 命令切换；请按账号实际可用模型维护。",
+            "hint": "用于 /生图模型 切换；请按账号实际可用模型维护。",
             "type": "list",
             "default": [
               "grok-imagine-image",
@@ -1165,7 +1066,7 @@
           },
           "available_models": {
             "description": "可用模型列表",
-            "hint": "用于 /生图模型 命令切换；请按 API-Inference 实际可用模型维护。",
+            "hint": "用于 /生图模型 切换；请按 API-Inference 实际可用模型维护。",
             "type": "list",
             "default": [
               "Qwen/Qwen-Image"
@@ -1295,7 +1196,7 @@
           },
           "available_models": {
             "description": "可用模型列表",
-            "hint": "用于 /生图模型 命令切换；请按接口实际支持的 Codex 模型填写。",
+            "hint": "用于 /生图模型 切换；请按接口实际支持的 Codex 模型填写。",
             "type": "list",
             "default": []
           },
@@ -1333,6 +1234,145 @@
               "step": 1
             },
             "default": 0
+          }
+        }
+      },
+      "comfyui": {
+        "name": "ComfyUI 工作流",
+        "hint": "调用本机或远程 ComfyUI，通过 /prompt 提交 API 格式工作流并轮询结果。",
+        "display_item": "name",
+        "hide_hint_in_list": true,
+        "items": {
+          "name": {
+            "description": "供应商名称",
+            "hint": "用于显示和模型选择；格式为“供应商名称/模型名称”。",
+            "type": "string",
+            "default": "ComfyUI"
+          },
+          "base_url": {
+            "description": "接口地址",
+            "hint": "ComfyUI 服务地址，默认 http://127.0.0.1:8188；远程部署时填写实际地址。",
+            "type": "string",
+            "default": "http://127.0.0.1:8188"
+          },
+          "proxy": {
+            "description": "代理地址",
+            "hint": "可选，示例：http://127.0.0.1:7890。本机 ComfyUI 通常不需要。",
+            "type": "string",
+            "default": ""
+          },
+          "api_keys": {
+            "description": "API 密钥",
+            "hint": "可选。填写后以 Bearer 方式发送，适用于带鉴权的反向代理；ComfyUI 本体通常不需要。",
+            "type": "list",
+            "default": []
+          },
+          "available_models": {
+            "description": "可用模型列表（仅显示）",
+            "hint": "可填任意显示文本，仅用于 /生图模型 列表、页面选择和日志展示，不会发送给 ComfyUI；实际模型由工作流中的加载节点决定，切换该列表不会改变工作流。",
+            "type": "list",
+            "default": [
+              "comfyui-workflow"
+            ]
+          },
+          "capability_options": {
+            "description": "模型能力",
+            "hint": "默认仅声明文生图。需要图生图时勾选并配置图片节点；尺寸能力需要在下方映射到工作流节点。",
+            "type": "list",
+            "options": [
+              "文生图",
+              "图生图",
+              "宽高比",
+              "分辨率"
+            ],
+            "default": [
+              "文生图"
+            ]
+          },
+          "timeout": {
+            "description": "超时时间（秒）",
+            "hint": "总生成等待时间；超时视为任务失败并尝试取消 ComfyUI 任务。填 0 表示使用“运行控制”中的超时时间。",
+            "type": "int",
+            "slider": {
+              "min": 0,
+              "max": 600,
+              "step": 10
+            },
+            "default": 0
+          },
+          "max_retry_attempts": {
+            "description": "重试次数覆盖",
+            "hint": "填 0 表示使用“运行控制”中的重试次数。工作流校验失败不会重试。",
+            "type": "int",
+            "slider": {
+              "min": 0,
+              "max": 10,
+              "step": 1
+            },
+            "default": 0
+          },
+          "workflow_file": {
+            "description": "工作流文件",
+            "hint": "上传 ComfyUI「导出（API）」得到的 JSON 文件。仅支持 API 格式，不是界面工作流；重新上传后下次生图自动生效。",
+            "type": "file",
+            "file_types": [
+              "json"
+            ]
+          },
+          "prompt_node_id": {
+            "description": "提示词节点 ID",
+            "hint": "可选。多个节点用逗号分隔；留空时从采样器的 positive 输入向上自动查找文本节点。",
+            "type": "string",
+            "default": ""
+          },
+          "prompt_input": {
+            "description": "提示词输入名",
+            "hint": "可选。指定提示词节点中的输入字段名，留空时自动选择 prompt 或 text。",
+            "type": "string",
+            "default": ""
+          },
+          "image_node_id": {
+            "description": "图片节点 ID",
+            "hint": "图生图时接收上传图片的 LoadImage 节点 ID；多个节点按参考图顺序用逗号分隔。留空自动查找 LoadImage。",
+            "type": "string",
+            "default": ""
+          },
+          "aspect_ratio_node_id": {
+            "description": "宽高比节点 ID",
+            "hint": "可选。留空自动查找带 aspect_ratio 文本输入的节点；枚举值会从 ComfyUI 节点定义中匹配。",
+            "type": "string",
+            "default": ""
+          },
+          "width_node_id": {
+            "description": "尺寸节点 ID",
+            "hint": "可选。留空自动查找同时带 width 和 height 数值输入的节点，例如 EmptyLatentImage。",
+            "type": "string",
+            "default": ""
+          },
+          "size_map_json": {
+            "description": "尺寸映射",
+            "hint": "可选。把分辨率/宽高比映射为 WxH，默认预置 1K 常用比例。示例：{\"1K:16:9\":\"1024x576\",\"1K:1:1\":\"1024x1024\"}。2K/4K 显存占用更高，可按需补充。匹配顺序：分辨率:宽高比 → 分辨率 → 宽高比 → default。",
+            "type": "string",
+            "editor_mode": true,
+            "editor_language": "json",
+            "default": "{\n  \"1K:1:1\": \"1024x1024\",\n  \"1K:4:3\": \"1024x768\",\n  \"1K:3:4\": \"768x1024\",\n  \"1K:16:9\": \"1024x576\",\n  \"1K:9:16\": \"576x1024\"\n}"
+          },
+          "poll_interval": {
+            "description": "轮询间隔（秒）",
+            "hint": "查询 /history 的间隔。通常建议 1～2 秒。",
+            "type": "int",
+            "slider": {
+              "min": 1,
+              "max": 30,
+              "step": 1
+            },
+            "default": 2
+          },
+          "cancel_on_timeout": {
+            "description": "超时后取消任务",
+            "hint": "开启后，超时会尝试取消该 ComfyUI 任务：优先调用 /api/jobs/{id}/cancel，失败时仅尝试移出排队。不会中断其他任务。",
+            "type": "bool",
+            "default": true
           }
         }
       },
@@ -1387,7 +1427,7 @@
           },
           "available_models": {
             "description": "可用模型列表",
-            "hint": "用于 /生图模型 命令切换；可在 JSON 模板中用 {model} 引用。",
+            "hint": "用于 /生图模型 切换；可在 JSON 模板中用 {model} 引用。",
             "type": "list",
             "default": [
               "custom-image-model"
@@ -1500,7 +1540,7 @@
     "items": {
       "model": {
         "description": "生图模型",
-        "hint": "可通过 /生图模型 命令切换；格式为“供应商名称/模型名称”。留空时自动使用第一个可用模型。",
+        "hint": "可通过 /生图模型 切换；格式为“供应商名称/模型名称”。留空时自动使用第一个可用模型。",
         "type": "string",
         "default": ""
       },
@@ -1564,6 +1604,7 @@
         "options": [
           "不指定",
           "1K",
+          "1.5K",
           "2K",
           "4K"
         ]
@@ -1954,12 +1995,12 @@
   },
   "prompt_templates": {
     "description": "提示词模板",
-    "hint": "集中配置预设提示词和人设模板；可通过 /预设 查看，通过 /生图 按名称使用。默认只从提示词开头连续匹配名称。",
+    "hint": "集中配置预设模板和人设模板；可通过 /预设 查看，通过 /生图 按名称使用。",
     "type": "object",
     "items": {
       "prompt_body_template_match": {
         "description": "提示词正文匹配",
-        "hint": "默认关闭，保持仅从提示词开头连续词匹配。勾选后才在提示词正文中匹配对应名称；可只匹配人设、只匹配预设，或两者都匹配。",
+        "hint": "默认关闭，仅在提示词开头连续匹配名称；勾选后会额外在正文中匹配对应类型。",
         "type": "list",
         "options": [
           "预设",
@@ -1968,17 +2009,139 @@
         "default": []
       },
       "presets": {
-        "description": "预设提示词",
-        "hint": "每项格式为“名称:提示词”；也支持 JSON 配置 prompt、aspect_ratio、resolution 和 description。",
+        "description": "预设提示词（旧版）",
+        "hint": "旧版预设配置，仅为兼容升级保留：首次加载后会迁移到“预设模板”，之后不再使用。请改用“预设模板”。",
+        "invisible": true,
         "type": "list",
+        "default": []
+      },
+      "presets_migrated": {
+        "description": "旧版预设已迁移",
+        "hint": "兼容标记：迁移旧版预设后置为 true，此后不再迁移。确认无需兼容旧配置的后续版本可删除本项与“预设提示词（旧版）”。",
+        "invisible": true,
+        "type": "bool",
+        "default": false
+      },
+      "preset_templates": {
+        "description": "预设模板",
+        "hint": "配置可复用的生图预设：提示词、宽高比、分辨率和参考图；/生图 开头名称或显式预设参数命中时自动应用。开启“提示词正文匹配”后也可在正文中匹配。",
+        "type": "template_list",
         "default": [
-          "手办化:Your task is to create a photorealistic, masterpiece-quality image of a 1/7 scale commercialized figurine based on the user's character. The final image must be in a realistic style and environment.\n\n**Crucial Instruction on Face & Likeness:** The figurine's face is the most critical element. It must be a perfect, high-fidelity 3D translation of the character from the source image. The sculpt must be sharp, clean, and intricately detailed, accurately capturing the original artwork's facial structure, eye style, expression, and hair. The final result must be immediately recognizable as the same character, elevated to a premium physical product standard. Do NOT generate a generic or abstract face.\n\n**Scene Composition (Strictly follow these details):**\n1. **Figurine & Base:** Place the figure on a computer desk. It must stand on a simple, circular, transparent acrylic base WITHOUT any text or markings.\n2. **Computer Monitor:** In the background, a computer monitor must display 3D modeling software (like ZBrush or Blender) with the digital sculpt of the very same figurine visible on the screen.\n3. **Artwork Display:** Next to the computer screen, include a transparent acrylic board with a wooden base. This board holds a print of the original 2D artwork that the figurine is based on.\n4. **Environment:** The overall setting is a desk, with elements like a keyboard to enhance realism. The lighting should be natural and well-lit, as if in a room.",
-          "绘画四宫格:Step 1: line drawing. Step 2: tile colors. Step 3: Add Shadows. Step 4: Refine and shape. No words",
-          "发型九宫格:A professional hairstyle showcase based on the input image of a person's upper body and face, displaying the character with nine distinct hairstyles arranged in a clean, grid-like layout (3x3 grid) on a single image. Each hairstyle replaces the original hair while preserving the person's facial features, skin tone, and clothing details from the input image. The hairstyles include a variety of styles: short pixie cut, long wavy hair, sleek bob, voluminous curls, high ponytail, messy bun, side-swept bangs, braided updo, and straight layered cut, each rendered with realistic textures and natural lighting. The background is a consistent, neutral color (pure white or light gray) to emphasize the hairstyles and maintain a polished, professional look suitable for hairstyle selection. Subtle labels beneath each hairstyle indicate the style name for clarity.",
-          "头像九宫格:Id photos of the person in the picture with 9 different hairstyles, showing close-ups of the person with each hairstyle (Japanese, Korean, n) , keeping the features and clothes, and integration of the output for a nine grid picture",
-          "表情九宫格:Transform the input person image (half-body portrait) into a 3x3 grid of nine distinct images, each showcasing a different facial expression with the corresponding text label below the face, while retaining the original character's facial features, hairstyle, and clothing details. Arrange the expressions as follows: top row (happy with raised corners and squinted eyes labeled 'Happy', sad with downturned mouth and raised inner brows labeled 'Sad', angry with furrowed brows and narrowed eyes labeled 'Angry'); middle row (surprised with wide eyes and open mouth labeled 'Surprised', fearful with wide eyes and tense brows labeled 'Fearful', disgusted with wrinkled nose and pursed lips labeled 'Disgusted'); bottom row (confused with uneven brows and asymmetrical mouth labeled 'Confused', proud with lifted chin and firm gaze labeled 'Proud', embarrassed with tense smile and downward gaze labeled 'Embarrassed'). Ensure each cell reflects the described expression naturally, with seamless completion of the lower body to match the original clothing style. Use a soft, unified background (e.g., light gray) and consistent lighting across all grids to maintain coherence and focus on the expressions.",
-          "表情包:{\"prompt\": \"为我生成图中角色的绘制 Q 版的,LINE 风格的半身像表情包,注意头饰要正确\\n彩色手绘风格,使用 4x6 布局,涵盖各种各样的常用聊天语句,或是一些有关的娱乐 meme\\n其他需求:不要原图复制。所有标注为手写简体中文。\", \"aspect_ratio\": \"16:9\", \"resolution\": \"2K\"}"
-        ]
+          {
+            "__template_key": "preset",
+            "preset_name": "手办化",
+            "preset_prompt": "Your task is to create a photorealistic, masterpiece-quality image of a 1/7 scale commercialized figurine based on the user's character. The final image must be in a realistic style and environment.\n\n**Crucial Instruction on Face & Likeness:** The figurine's face is the most critical element. It must be a perfect, high-fidelity 3D translation of the character from the source image. The sculpt must be sharp, clean, and intricately detailed, accurately capturing the original artwork's facial structure, eye style, expression, and hair. The final result must be immediately recognizable as the same character, elevated to a premium physical product standard. Do NOT generate a generic or abstract face.\n\n**Scene Composition (Strictly follow these details):**\n1. **Figurine & Base:** Place the figure on a computer desk. It must stand on a simple, circular, transparent acrylic base WITHOUT any text or markings.\n2. **Computer Monitor:** In the background, a computer monitor must display 3D modeling software (like ZBrush or Blender) with the digital sculpt of the very same figurine visible on the screen.\n3. **Artwork Display:** Next to the computer screen, include a transparent acrylic board with a wooden base. This board holds a print of the original 2D artwork that the figurine is based on.\n4. **Environment:** The overall setting is a desk, with elements like a keyboard to enhance realism. The lighting should be natural and well-lit, as if in a room.",
+            "preset_aspect_ratio": "",
+            "preset_resolution": "",
+            "preset_image": []
+          },
+          {
+            "__template_key": "preset",
+            "preset_name": "表情包",
+            "preset_prompt": "为我生成图中角色的绘制 Q 版的,LINE 风格的半身像表情包,注意头饰要正确\n彩色手绘风格,使用 4x6 布局,涵盖各种各样的常用聊天语句,或是一些有关的娱乐 meme\n其他需求:不要原图复制。所有标注为手写简体中文。",
+            "preset_aspect_ratio": "16:9",
+            "preset_resolution": "",
+            "preset_image": []
+          },
+          {
+            "__template_key": "preset",
+            "preset_name": "蜡笔画",
+            "preset_prompt": "请根据角色的标志性外形和性格，直接生成一张Q版半身涂鸦插画，统一采用以下画风。画面为方形，纯白背景。人物大头小身，头部微歪，身体下缘裁出画面，周围保留适量空白。帽子、发饰等标志性部件应完整呈现。采用潦草、简省的粗蜡笔与油画棒画法，像随手快速画出的可爱小涂鸦。轮廓用粗重、不规则的黑色笔触勾出，局部加入深蓝色描线。线条允许抖动、断笔、轻微错位和重复描画，收笔随意，保留干擦和颗粒感。用少量大块形状概括头发、衣服和配饰。头发只保留几束明显的刘海与外轮廓，衣服只画必要的领口、袖口和少数褶皱。色块用几笔宽而随意的笔触薄涂，保留明显漏白，少量颜色可以轻微超出轮廓。黑色头发、帽子和衣服也应保留未涂满的空隙。脸部、头发和衣服内部保留大片白色，只添加极少量浅灰、蓝灰阴影。省略鼻子，眼睛和嘴巴用几笔概括，腮红用两三道粉色短线表示。潦草感主要通过减笔、形状概括和不规则轮廓体现。根据角色性格选择合适的表情和一个简单、生动的小动作。例如慵懒角色可以半眯眼、垂肩；活泼角色可以咧嘴笑、挥手；自信角色可以挑眉、叉腰；神秘角色可以歪头、露出含蓄的笑。不同角色应有不同的神态与姿势，同时保留最容易辨认的发型、配色和服装特征。整体扁平、简洁、可爱，带有随性而鲜活的手绘感。配饰以角色本身的标志性特征为主。避免精细发丝、复杂虹膜、密集排线、繁琐衣饰、均匀铺满的纹理、光滑矢量线条、精细赛璐璐、复杂渐变、强烈立体光影、3D渲染、复杂背景、文字和水印。",
+            "preset_aspect_ratio": "",
+            "preset_resolution": "",
+            "preset_image": []
+          },
+          {
+            "__template_key": "preset",
+            "preset_name": "GrokBot",
+            "preset_prompt": "将用户提供的图像中的人物或角色重新诠释为一张拥有黑色胶囊状眼睛的极简 2D 机器人头像图标。从原图中提取能够帮助辨认目标角色的外观特征，并按照以下规范处理脸部结构、眼睛、表情、构图和上色。\n【目标】将用户提供的图像中的人物或角色重新诠释为一张拥有黑色胶囊状眼睛的极简 2D 机器人头像图标。从原图中提取能够帮助辨认目标角色的外观特征，并按照以下规范处理脸部结构、眼睛、表情、构图和上色。\n【从原图中提取的信息】确认目标角色的肤色或脸部表面的基础颜色、发色以及头发轮廓。头发的长度、分缝、卷曲程度、具有代表性的刘海以及扎发形式，都以原图为准。从具有辨识度的耳朵、帽子、眼镜、胡须、装饰物、机械部件等特征中，选择对角色识别最重要的元素。保留其基本颜色，并将需要通过形状保留下来的核心特征控制在最多三个左右。优先保留较大的整体轮廓，而不是细小的细节。不要将肤色和发色统一成某一种固定颜色。如果原图中没有头发，或者头发处于被遮挡的状态，则保持原本的状态；不要添加原图中不存在的刘海、饰品或机械部件。不要复制原图中的表情和写实的脸部结构。复杂的服装和装备只保留有助于辨认角色的部分。即使存在单独的风格参考图，也只能从需要转换的目标角色原图中提取角色外观信息。不要将风格参考图中的肤色、发色、发型或装饰转移到目标角色身上。\n【脸部】将大型、圆润的机器人脸部与经过简化的头发以及角色识别特征结合起来。可爱感主要通过圆润的比例以及倾斜的构图来表现，而不是依靠额外的表情装饰。脸部以原图中的肤色或表面颜色为基础，用宽阔、平滑的色块进行表现。脸颊与下巴之间要自然柔和地连接，避免尖锐或棱角分明的下巴，以及写实的面部骨骼结构描绘。不要绘制嘴巴和鼻子。不要加入微笑的嘴、小点状嘴巴或猫咪嘴等任何嘴部形状。在左右脸颊上加入与肤色协调的、低饱和度的浅色椭圆形腮红。腮红使用没有线条、没有高光的扁平色块表现。眼睛和腮红周围要保留足够的空白脸部区域。如果眼镜或胡须属于角色的重要识别特征，可以用最简化的形式保留。但眼镜不能遮挡两只眼睛；胡须不能以描绘嘴部或写实脸部结构的方式表现。\n【眼睛】眼睛必须准确绘制为两个接近纯黑色的单色胶囊形图案。当脸部处于正常竖直状态时，眼睛应该是纵向细长的圆角长条形，两端为圆弧形。纵向长度约为横向宽度的2.5～3倍，两只眼睛大小完全相同，并且相互平行排列。每只眼睛的长轴都要与连接两只眼睛中心的线保持垂直关系。在保持这一排列方式的基础上，根据【构图】部分指定的方向和角度，让头部和两只眼睛一起倾斜。不要绘制横向躺倒的长条眼睛，也不要画成闭眼的形状。每个胶囊形眼睛都必须使用单一、完整、无缝隙的纯色填充。这个胶囊形图案本身就是眼睛，因此内部不能再绘制眼球或瞳孔。禁止加入虹膜眼白反光高光闪光渐变睫毛眼皮眉毛眼睛边框装饰同时，不要出现类似数字“1”的弯钩或底座形状的笔画。无论原角色原本的眼睛形状和眼睛颜色是什么，都必须优先遵循这里规定的眼睛样式。\n【构图】使用1:1 的正方形画布，画面中只放置一个角色。将角色的脸部以及头发或头部外轮廓进行非常大幅度的放大，使其占据画面的绝大部分区域。角色采用一种从画面左下方倾斜着探头看向画面的构图。将头部顺时针倾斜约 15～20 度，使画面左侧的眼睛看起来比右侧眼睛略高。脸部、两只眼睛、头发以及附着在头发上的装饰，都必须保持相同的倾斜角度。头部的左侧和下侧边缘自然地超出画面边界并被裁切。下巴需要接触画面底部边缘，或者部分超出画面范围。画面右上方保留一块深色背景的空白区域。两只眼睛必须完整露出，不能被刘海或装饰物遮挡。避免将整个头部缩小后放在画面正中央的证件照式构图，也避免左右完全对称的构图。不要绘制身体和手。只有在角色识别确实需要的情况下，才可以在画面下方保留一小部分脖子或衣领。脸部放大以及画面边缘裁切都是有意设计的构图效果。\n【头发・装饰・上色】头发不要描绘大量零散的发丝，而是简化为几个大型、平滑的头发块面。保持原图中的：刘海方向头发长度感整体发型轮廓使用一种几乎没有轮廓线、以色块为核心的极简 2D 表现方式。不要使用粗重的黑色描边，而是通过相邻色块之间的颜色差异来区分不同的形状。使用原角色本身的代表性色彩进行扁平、柔和的上色。在基础颜色上最多增加一层宽阔且较弱的阴影。如果需要表现头发高光，也只能使用一到两个较大的色块，不要加入大量细碎高光。装饰物和机械部件只保留：整体轮廓大型连接部分省略以下细节：小螺丝电线电路密集的面板线条复杂图案即使将最终图像缩小成一个小型个人头像图标，也必须能够立即识别出：两个黑色胶囊状眼睛 + 原角色的核心外形轮廓。\n【背景与排除元素】背景使用覆盖整个画布的接近纯黑色的深炭灰色纯色背景。不要加入任何背景物体或背景图案。禁止出现：圆形边框徽章边框文字数字Logo水印对话框感叹号Glitter / 闪粉效果粒子效果光晕镜头光晕同时避免以下表现：写实风格3D 渲染油画质感粗糙的素描线条过度光泽复杂的明暗关系大量碎发描绘过于密集的装饰\n【冲突处理】如果不同规则之间发生冲突，则按照以下优先级处理：1. 两个没有任何装饰的黑色胶囊状眼睛。2. 没有嘴巴和鼻子的圆润机器人脸部。3. 两只眼睛完整可见的倾斜超近距离构图。4. 原角色的基础颜色以及核心识别特征。5. 其他细节。如果刘海遮挡了眼睛，则在保持原有代表性发型走向的前提下，对刘海的长度、宽度和位置进行调整。如果核心装饰物因为画面裁切而完全消失，则可以对其大小和位置进行小幅度调整，使能够辨认的部分保留下来。在这个过程中，不得创造原图中不存在的新特征。\n【执行与后续修改】当用户要求生成或转换图像时，应当不附带任何解释或文字，直接以一张实际生成完成的图标作为回复。如果用户只附带了一张需要转换的图片，并且没有提出其他具体问题，则将其视为默认转换请求进行处理。如果无法确认需要转换的目标图像，则要求用户上传图片。如果图片中存在多个人物，并且用户没有指定具体目标，则需要询问用户希望转换哪一个人物。如果用户只是询问：如何修改提示词规则说明结果分析使用方法则使用文字回答，不要生成新的图片。只有在用户明确要求时，才提供制作规格说明，并且不要将制作规格文字放入生成的图片中。进行后续修改时，只修改用户明确要求修改的部分。对于没有提出修改要求的部分，应继续保持原有的：风格规范角色外观特征构图规则颜色规则不变。不要声称自己已经生成或验证了实际上并没有生成或确认的结果。",
+            "preset_aspect_ratio": "1:1",
+            "preset_resolution": "",
+            "preset_image": []
+          }
+        ],
+        "templates": {
+          "preset": {
+            "name": "预设",
+            "hint": "可复用的生图预设模板。",
+            "display_item": "preset_name",
+            "hide_hint_in_list": true,
+            "items": {
+              "preset_name": {
+                "description": "预设名称",
+                "hint": "用于 /生图 开头名称、显式预设参数，以及可选的提示词正文匹配。",
+                "type": "string"
+              },
+              "preset_prompt": {
+                "description": "预设提示词",
+                "hint": "使用该预设生图时拼接进提示词。",
+                "type": "text"
+              },
+              "preset_aspect_ratio": {
+                "description": "宽高比",
+                "hint": "可选，不覆盖时沿用默认宽高比。",
+                "type": "string",
+                "default": "",
+                "options": [
+                  "",
+                  "1:1",
+                  "2:3",
+                  "3:2",
+                  "3:4",
+                  "4:3",
+                  "4:5",
+                  "5:4",
+                  "9:16",
+                  "16:9",
+                  "21:9"
+                ],
+                "labels": [
+                  "不覆盖",
+                  "1:1",
+                  "2:3",
+                  "3:2",
+                  "3:4",
+                  "4:3",
+                  "4:5",
+                  "5:4",
+                  "9:16",
+                  "16:9",
+                  "21:9"
+                ]
+              },
+              "preset_resolution": {
+                "description": "分辨率",
+                "hint": "可选，不覆盖时沿用默认分辨率。",
+                "type": "string",
+                "default": "",
+                "options": [
+                  "",
+                  "1K",
+                  "1.5K",
+                  "2K",
+                  "4K"
+                ],
+                "labels": [
+                  "不覆盖",
+                  "1K",
+                  "1.5K",
+                  "2K",
+                  "4K"
+                ]
+              },
+              "preset_image": {
+                "description": "预设参考图",
+                "hint": "可选；当前模型支持图生图时作为参考图使用。",
+                "type": "file",
+                "file_types": [
+                  "jpg",
+                  "jpeg",
+                  "png"
+                ]
+              }
+            }
+          }
+        }
       },
       "personas": {
         "description": "人设模板",
@@ -1999,12 +2162,12 @@
               },
               "persona_prompt": {
                 "description": "人设描述",
-                "hint": "使用该人设生图时会拼接到提示词前。",
+                "hint": "使用该人设生图时拼接进提示词。",
                 "type": "text"
               },
               "persona_image": {
                 "description": "人设参考图",
-                "hint": "可选；作为图生图参考图使用。",
+                "hint": "可选；当前模型支持图生图时作为参考图使用。",
                 "type": "file",
                 "file_types": [
                   "jpg",
@@ -2048,6 +2211,23 @@
           "min": 0,
           "max": 365,
           "step": 1
+        },
+        "default": 0
+      },
+      "persist_generated_images": {
+        "description": "持久化生成的图片",
+        "hint": "开启后生成的图片保存在插件数据目录 generated_images 下，不会随 AstrBot 临时目录被清理；关闭后仍写入 AstrBot 临时目录。",
+        "type": "bool",
+        "default": true
+      },
+      "persisted_image_limit": {
+        "description": "持久化图片数量上限",
+        "hint": "最多保留的持久化图片数量，超出后按生成时间删除最旧的图片；设置为 0 表示不限制。",
+        "type": "int",
+        "slider": {
+          "min": 0,
+          "max": 10000,
+          "step": 100
         },
         "default": 0
       }

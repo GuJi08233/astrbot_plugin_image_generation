@@ -36,7 +36,6 @@ ADAPTER_EXTRA_DEFAULTS: dict[AdapterType, dict[str, Any]] = {
         "modalities": ["image", "text"],
     },
     AdapterType.OPENAI: {
-        "model_family": "auto",
         "enable_streaming": True,
         "output_format": "png",
     },
@@ -91,6 +90,7 @@ class ConfigProviderParserMixin:
                     AdapterType.CUSTOM_HTTP,
                     AdapterType.CODEX_RESPONSES,
                     AdapterType.NOVELAI,
+                    AdapterType.COMFYUI,
                 },
             ),
             api_keys=self._parse_string_list(provider_item.get("api_keys", [])),

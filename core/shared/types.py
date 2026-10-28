@@ -16,12 +16,12 @@ class AdapterType(str, enum.Enum):
     VOLCENGINE_ARK = "volcengine_ark"
     GITEE_AI = "gitee_ai"
     AGNES_AI = "agnes_ai"
-    JIMENG2API = "jimeng2api"
     GROK = "grok"
     CODEX_RESPONSES = "codex_responses"
     MODELSCOPE = "modelscope"
     NOVELAI = "novelai"
     CUSTOM_HTTP = "custom_http"
+    COMFYUI = "comfyui"
 
 
 class ImageCapability(enum.Flag):
@@ -34,14 +34,6 @@ class ImageCapability(enum.Flag):
     ASPECT_RATIO = enum.auto()  # Explicit aspect-ratio support.
     NEGATIVE_PROMPT = enum.auto()  # Request-scoped negative prompt input.
     NOVELAI_OPTIONS = enum.auto()  # Structured NovelAI generation controls.
-
-
-@dataclass
-class AdapterMetadata:
-    """Metadata describing adapter capabilities."""
-
-    name: str
-    capabilities: ImageCapability = ImageCapability.TEXT_TO_IMAGE
 
 
 @dataclass

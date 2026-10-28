@@ -4,22 +4,23 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any
-
-from pydantic import Field
-from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from astrbot.api import logger
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
+from astrbot.core.tools.message_tools import SendMessageToUserTool
+from pydantic import Field
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from ..config.templates import (
     build_generation_prompt,
     extract_templates_from_prompt,
     find_named_entry,
     format_template_summary,
-    parse_preset_prompt,
+    resolve_named_templates,
 )
 from ..config.templates import (
     normalize_name_items as _normalize_name_items,
@@ -30,25 +31,35 @@ from ..generation.novelai_options import (
     NOVELAI_SAMPLERS,
     validate_novelai_options,
 )
+from ..generation.options import is_explicit_size
 from ..generation.reference_collector import (
+    ContextReferenceImageNotFoundError,
     collect_tool_reference_images,
+    extract_latest_user_context_images,
 )
 from ..generation.reference_collector import (
     normalize_string_items as _normalize_string_items,
 )
-from ..shared.constants import SUPPORTED_ASPECT_RATIOS, SUPPORTED_RESOLUTIONS
 from ..shared.logging import (
     log_prefix,
     mask_sensitive,
     safe_log_error_body,
     safe_log_text,
 )
-from ..shared.types import ImageCapability
+from ..shared.types import ImageCapability, ImageData
 from ..tasks.ids import new_task_id
 from ..tasks.models import GenerationTaskCreationError
+from .preset_text import (
+    ASPECT_RATIO_OPTIONS,
+    RESOLUTION_OPTIONS,
+    _format_persona_detail,
+    _format_preset_detail,
+    normalize_preset_edit_action,
+    normalize_preset_query_category,
+    normalize_task_action,
+    validate_preset_options,
+)
 
-ASPECT_RATIO_OPTIONS = list(SUPPORTED_ASPECT_RATIOS)
-RESOLUTION_OPTIONS = list(SUPPORTED_RESOLUTIONS)
 LOG = log_prefix("LLMTool")
 
 
@@ -74,119 +85,6 @@ def normalize_name_items(raw: Any) -> list[str]:
     return _normalize_name_items(raw)
 
 
-def normalize_preset_query_category(category: str) -> str:
-    """Normalize preset query category aliases."""
-    normalized = category.strip().lower()
-    if normalized in {
-        "人设",
-        "persona",
-        "personas",
-        "list_persona",
-        "list_personas",
-        "get_persona",
-        "persona_list",
-    }:
-        return "persona"
-    return "preset"
-
-
-def normalize_preset_edit_action(action: str) -> str:
-    """Normalize preset edit action aliases."""
-    normalized = action.strip().lower()
-    if normalized in {"添加", "新增", "保存", "save", "create", "add", "add_preset"}:
-        return "create_preset"
-    if normalized in {
-        "删除",
-        "移除",
-        "remove",
-        "del",
-        "delete",
-        "delete_preset",
-    }:
-        return "delete_preset"
-    return normalized
-
-
-def normalize_task_action(action: str) -> str:
-    """Normalize image task management action aliases."""
-    normalized = action.strip().lower()
-    if normalized in {"", "列表", "查看列表", "list", "list_tasks", "tasks"}:
-        return "list"
-    if normalized in {"详情", "查看", "查询", "detail", "get", "show"}:
-        return "detail"
-    if normalized in {"取消", "cancel", "cancel_task"}:
-        return "cancel"
-    return normalized
-
-
-def _parse_preset(
-    plugin: Any,
-    preset_names: Any,
-    aspect_ratio: Any,
-    resolution: Any,
-) -> tuple[list[str], str, str, list[str], str | None]:
-    """Apply one or more preset prompts and optional generation overrides."""
-    names = normalize_name_items(preset_names)
-    if not names:
-        return [], str(aspect_ratio), str(resolution), [], None
-
-    prompt_parts: list[str] = []
-    matched_presets: list[str] = []
-    for preset_name in names:
-        matched_preset = find_named_entry(plugin.config_manager.presets, preset_name)
-        if not matched_preset:
-            return (
-                [],
-                str(aspect_ratio),
-                str(resolution),
-                [],
-                f"❌ 预设不存在: {preset_name}",
-            )
-
-        preset_prompt, aspect_ratio, resolution = parse_preset_prompt(
-            plugin.config_manager.presets[matched_preset],
-            str(aspect_ratio),
-            str(resolution),
-        )
-
-        if preset_prompt:
-            prompt_parts.append(preset_prompt)
-        matched_presets.append(matched_preset)
-
-    return prompt_parts, str(aspect_ratio), str(resolution), matched_presets, None
-
-
-def _parse_persona(
-    plugin: Any,
-    persona_names: Any,
-) -> tuple[list[str], list[tuple[str, str]], list[str], str | None]:
-    """Apply one or more persona prompts and reference images."""
-    names = normalize_name_items(persona_names)
-    if not names:
-        return [], [], [], None
-
-    prompt_parts: list[str] = []
-    persona_images: list[tuple[str, str]] = []
-    matched_personas: list[str] = []
-    for persona_name in names:
-        matched_persona = find_named_entry(
-            plugin.config_manager.personas,
-            persona_name,
-        )
-        if not matched_persona:
-            return [], [], [], f"❌ 人设不存在: {persona_name}"
-
-        persona = plugin.config_manager.personas[matched_persona]
-        persona_prompt = persona.prompt.strip()
-        if persona_prompt:
-            prompt_parts.append(persona_prompt)
-        if persona.image:
-            persona_images.append((matched_persona, persona.image))
-        matched_personas.append(matched_persona)
-
-    return prompt_parts, persona_images, matched_personas, None
-
-
 async def _start_generation_task(
     plugin: Any,
     event: Any,
@@ -195,8 +93,11 @@ async def _start_generation_task(
     aspect_ratio: str,
     resolution: str,
     reference_images: Any = None,
+    context_images: Any = None,
+    cached_context_images: list[ImageData] | None = None,
+    use_context_images: bool = False,
     avatar_references: Any = None,
-    persona_images: list[tuple[str, str]] | None = None,
+    template_images: list[tuple[str, str]] | None = None,
     preset_or_persona: str | None = None,
     preset_label: str = "预设",
     presets: list[str] | None = None,
@@ -231,18 +132,17 @@ async def _start_generation_task(
     if not plugin.generator or not plugin.generator.adapter:
         return "❌ 生图生成器未初始化"
 
+    capabilities = plugin.generator.adapter.get_capabilities()
+    if use_context_images and not (capabilities & ImageCapability.IMAGE_TO_IMAGE):
+        return "❌ 当前模型不支持图生图，无法按要求修改图片"
+
     if negative_prompt is not None:
         if not isinstance(negative_prompt, str):
             return "❌ 反向提示词必须为字符串"
-        if not (
-            plugin.generator.adapter.get_capabilities()
-            & ImageCapability.NEGATIVE_PROMPT
-        ):
+        if not (capabilities & ImageCapability.NEGATIVE_PROMPT):
             return "❌ 当前生图接口不支持反向提示词输入"
 
-    if novelai is not None and not (
-        plugin.generator.adapter.get_capabilities() & ImageCapability.NOVELAI_OPTIONS
-    ):
+    if novelai is not None and not (capabilities & ImageCapability.NOVELAI_OPTIONS):
         return "❌ 当前生图接口不支持 NovelAI 专属参数"
 
     image_count = plugin.normalize_image_count(image_count)
@@ -256,7 +156,6 @@ async def _start_generation_task(
         event.unified_msg_origin,
         is_admin=is_usage_limit_admin,
         requested_count=image_count,
-        update_timestamp=False,
     )
     if isinstance(check_result, str):
         if check_result:
@@ -293,27 +192,32 @@ async def _start_generation_task(
             masked_uid = mask_sensitive(event.unified_msg_origin)
             logger.info(f"{LOG} 工具调用触发限制: {check_result} (用户: {masked_uid})")
         return check_result
-    usage_reserved = True
     task_created = False
 
     task_id = new_task_id()
     try:
-        capabilities = plugin.generator.adapter.get_capabilities()
         try:
             images_data = await collect_tool_reference_images(
                 plugin.image_processor,
                 event,
                 capabilities=capabilities,
                 reference_images=reference_images,
+                context_images=context_images,
+                cached_context_images=cached_context_images,
+                use_context_images=use_context_images,
                 avatar_references=avatar_references,
-                persona_images=persona_images,
+                template_images=template_images,
                 task_id=task_id,
             )
+        except ContextReferenceImageNotFoundError:
+            raise
         except Exception as exc:
             logger.error(
                 f"{log_prefix('LLMTool', task_id)} 处理参考图失败: {safe_log_error_body(exc, 200)}",
                 exc_info=True,
             )
+            if use_context_images:
+                raise ContextReferenceImageNotFoundError from exc
             images_data = []
 
         reference_image_count = len(images_data)
@@ -323,47 +227,59 @@ async def _start_generation_task(
             unified_msg_origin=event.unified_msg_origin,
         )
 
-        try:
-            plugin.create_generation_task(
-                task_id=task_id,
-                source="LLM工具",
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                novelai=novelai,
-                images_data=images_data,
-                unified_msg_origin=event.unified_msg_origin,
-                aspect_ratio=aspect_ratio,
-                resolution=resolution,
-                image_count=image_count,
-                is_usage_limit_admin=is_usage_limit_admin,
-                preset=preset_or_persona,
-                preset_label=preset_label,
-                presets=presets,
-                personas=personas,
-                source_event=event,
-            )
-            task_created = True
-        except GenerationTaskCreationError:
-            # create_generation_task() rolls back quota reservation on creation failure.
-            usage_reserved = False
-            raise
+        plugin.create_generation_task(
+            task_id=task_id,
+            source="LLM工具",
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            novelai=novelai,
+            images_data=images_data,
+            unified_msg_origin=event.unified_msg_origin,
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+            image_count=image_count,
+            is_usage_limit_admin=is_usage_limit_admin,
+            preset=preset_or_persona,
+            preset_label=preset_label,
+            presets=presets,
+            personas=personas,
+            source_event=event,
+        )
+        task_created = True
     except asyncio.CancelledError:
-        if usage_reserved and not task_created:
-            plugin.usage_manager.release_reserved_usage(
-                event.unified_msg_origin,
-                is_admin=is_usage_limit_admin,
-                count=image_count,
-            )
+        if not task_created:
+            record = plugin.task_manager.get_generation_task(task_id)
+            if record and record.quota_date:
+                plugin.usage_manager.release_reserved_usage(
+                    event.unified_msg_origin,
+                    is_admin=is_usage_limit_admin,
+                    count=image_count,
+                    quota_date=record.quota_date,
+                )
         raise
     except GenerationTaskCreationError as exc:
         return f"❌ 生图任务提交失败: {exc.message} ({exc.code})"
+    except ContextReferenceImageNotFoundError:
+        if not task_created:
+            record = plugin.task_manager.get_generation_task(task_id)
+            if record and record.quota_date:
+                plugin.usage_manager.release_reserved_usage(
+                    event.unified_msg_origin,
+                    is_admin=is_usage_limit_admin,
+                    count=image_count,
+                    quota_date=record.quota_date,
+                )
+        return "❌ 未找到可用的聊天图片，已取消改图任务；请重新发送或引用图片后再试"
     except Exception as exc:
-        if usage_reserved and not task_created:
-            plugin.usage_manager.release_reserved_usage(
-                event.unified_msg_origin,
-                is_admin=is_usage_limit_admin,
-                count=image_count,
-            )
+        if not task_created:
+            record = plugin.task_manager.get_generation_task(task_id)
+            if record and record.quota_date:
+                plugin.usage_manager.release_reserved_usage(
+                    event.unified_msg_origin,
+                    is_admin=is_usage_limit_admin,
+                    count=image_count,
+                    quota_date=record.quota_date,
+                )
         logger.error(
             f"{log_prefix('LLMTool', task_id)} 生图任务提交前处理失败: {safe_log_error_body(exc, 200)}",
             exc_info=True,
@@ -392,6 +308,8 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
     description: str = (
         "使用生图模型生成或修改图片；支持普通生图、多预设、自拍、人像、头像和多个人设照片。"
         "当用户要求自拍/头像/人像/某个人设或角色出镜时，应优先填写 persona。"
+        "修改用户当前消息、引用消息或此前聊天中的图片时，必须将 use_context_images 设为 true，"
+        "不要只在 prompt 中描述‘参考图’。"
     )
     parameters: dict = Field(
         default_factory=lambda: {
@@ -630,11 +548,11 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
                 },
                 "preset": {
                     "type": "string",
-                    "description": "可选。使用一个或多个已配置的预设名称，多个名称可用空格分隔；会按顺序拼接预设提示词，并可继承预设中的宽高比和分辨率。",
+                    "description": "可选。一个或多个已配置的预设名称，多个名称用空格分隔；预设可能自带宽高比和分辨率，无需重复指定。",
                 },
                 "persona": {
                     "type": "string",
-                    "description": "可选。使用一个或多个已配置的人设名称，多个名称可用空格分隔。当用户要求自拍、头像、人像、人设照片或某角色出镜时优先填写；会按顺序拼接人设描述，并在支持图生图时加入人设参考图。",
+                    "description": "可选。一个或多个已配置的人设名称，多个名称用空格分隔。用户要求自拍、头像、人像、人设照片或某角色出镜时优先填写。",
                 },
                 "aspect_ratio": {
                     "type": "string",
@@ -644,25 +562,29 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
                 },
                 "resolution": {
                     "type": "string",
-                    "description": "图片质量/分辨率。使用'不指定'时请求中不携带分辨率字段。",
+                    "description": "图片质量/分辨率。如果不确定，请使用'不指定'。",
                     "enum": RESOLUTION_OPTIONS,
                     "default": "不指定",
                 },
                 "image_count": {
                     "type": "integer",
-                    "description": "本次任务要生成的图片数量。不填时使用插件默认出图数量；超过配置上限时会自动截断。",
+                    "description": "本次任务要生成的图片数量。",
                     "minimum": 1,
                     "default": 1,
                 },
                 "avatar_references": {
                     "type": "array",
-                    "description": "可选。需要使用头像作为参考图时填写，'self' 表示机器人，'sender' 表示发送者，也可填写 QQ 号/用户 ID。",
+                    "description": "可选。使用头像作为参考图时填写：'self' 表示自己，'sender' 表示发送者，也可填写用户 ID。",
                     "items": {"type": "string"},
                 },
                 "reference_images": {
                     "type": "array",
-                    "description": "可选。参考图列表，支持 http(s) 网络图片 URL；本地图片仅允许当前会话 workspace和AstrBot temp 目录。",
+                    "description": "可选。参考图列表，支持 http(s) 网络图片 URL。",
                     "items": {"type": "string"},
+                },
+                "use_context_images": {
+                    "type": "boolean",
+                    "description": "是否使用聊天中的图片作为改图参考。修改当前消息、引用消息、上一张图或近期聊天图片时必须设为 true，插件会自动取图；纯文生图设为 false。",
                 },
             },
             "required": [],
@@ -686,27 +608,38 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
 
         prompt = str(kwargs.get("prompt", "") or "").strip()
         raw_aspect_ratio = kwargs.get("aspect_ratio")
+        raw_resolution = kwargs.get("resolution")
         aspect_ratio = raw_aspect_ratio or plugin.config_manager.default_aspect_ratio
-        resolution = (
-            kwargs.get("resolution") or plugin.config_manager.default_resolution
-        )
+        resolution = raw_resolution or plugin.config_manager.default_resolution
 
-        preset_prompts, aspect_ratio, resolution, matched_presets, error = (
-            _parse_preset(
-                plugin,
-                kwargs.get("preset"),
-                aspect_ratio,
-                resolution,
+        (
+            preset_prompts,
+            aspect_ratio,
+            resolution,
+            matched_presets,
+            preset_images,
+            error,
+        ) = resolve_named_templates(
+            normalize_name_items(kwargs.get("preset")),
+            plugin.config_manager.presets,
+            kind="preset",
+            aspect_ratio=str(aspect_ratio),
+            resolution=str(resolution),
+        )
+        if error:
+            return f"❌ {error}"
+        persona_prompts, _, _, matched_personas, persona_images, error = (
+            resolve_named_templates(
+                normalize_name_items(kwargs.get("persona")),
+                plugin.config_manager.personas,
+                kind="persona",
+                aspect_ratio=str(aspect_ratio),
+                resolution=str(resolution),
             )
         )
         if error:
-            return error
-        persona_prompts, persona_images, matched_personas, error = _parse_persona(
-            plugin,
-            kwargs.get("persona"),
-        )
-        if error:
-            return error
+            return f"❌ {error}"
+        template_images = [*preset_images, *persona_images]
         if plugin.config_manager.match_templates_in_prompt_body:
             (
                 prompt,
@@ -716,7 +649,7 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
                 extra_persona_prompts,
                 extra_presets,
                 extra_personas,
-                extra_persona_images,
+                extra_template_images,
             ) = extract_templates_from_prompt(
                 prompt,
                 plugin.config_manager.prompt_body_presets(),
@@ -729,7 +662,11 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
             persona_prompts.extend(extra_persona_prompts)
             matched_presets.extend(extra_presets)
             matched_personas.extend(extra_personas)
-            persona_images.extend(extra_persona_images)
+            template_images.extend(extra_template_images)
+        if is_explicit_size(raw_aspect_ratio):
+            aspect_ratio = raw_aspect_ratio
+        if is_explicit_size(raw_resolution):
+            resolution = raw_resolution
         prompt = build_generation_prompt(
             preset_prompts=preset_prompts,
             persona_prompts=persona_prompts,
@@ -751,6 +688,46 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
             logger.warning(f"{LOG} 工具调用上下文缺少事件。上下文类型: {type(context)}")
             return "❌ 无法获取当前消息上下文"
 
+        raw_use_context_images = kwargs.get("use_context_images")
+        if isinstance(raw_use_context_images, str):
+            use_context_images = raw_use_context_images.strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+        else:
+            use_context_images = bool(raw_use_context_images)
+
+        reference_images = normalize_string_items(kwargs.get("reference_images"))
+        context_references: list[str] = []
+        cached_context_images: list[ImageData] = []
+        if use_context_images:
+            history_messages = list(getattr(context, "messages", None) or [])
+            # The current turn is appended to the live context before tools run.
+            # Its images are collected from the event, so skip that trailing copy
+            # and let an earlier cached image win over older history.
+            if (
+                history_messages
+                and getattr(history_messages[-1], "role", None) == "user"
+            ):
+                history_messages = history_messages[:-1]
+            context_references = extract_latest_user_context_images(history_messages)
+            if context_references:
+                logger.debug(
+                    f"{LOG} 已从聊天上下文选取最近一条用户消息中的 "
+                    f"{len(context_references)} 张参考图"
+                )
+            else:
+                logger.warning(f"{LOG} 已请求使用聊天上下文图片，但未找到可用图片")
+            cache_getter = getattr(plugin, "get_recent_context_images", None)
+            if callable(cache_getter):
+                cached_context_images = cache_getter(event)
+                if cached_context_images:
+                    logger.debug(
+                        f"{LOG} 已从会话缓存取得 {len(cached_context_images)} 张参考图"
+                    )
+
         return await _start_generation_task(
             plugin,
             event,
@@ -759,9 +736,12 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
             novelai=novelai,
             aspect_ratio=str(aspect_ratio),
             resolution=str(resolution),
-            reference_images=kwargs.get("reference_images"),
+            reference_images=reference_images,
+            context_images=context_references,
+            cached_context_images=cached_context_images,
+            use_context_images=use_context_images,
             avatar_references=kwargs.get("avatar_references"),
-            persona_images=persona_images,
+            template_images=template_images,
             preset_or_persona=preset_or_persona,
             preset_label=preset_label,
             presets=matched_presets,
@@ -771,78 +751,14 @@ class ImageGenerationTool(FunctionTool[AstrAgentContext]):
         )
 
 
-def _format_preset_detail(name: str, content: Any) -> str:
-    """Format one preset's full content for query results."""
-    content_text = str(content or "").strip()
-    lines = [f"📋 预设详情: {name}"]
-    if content_text.startswith("{"):
-        try:
-            preset_data = json.loads(content_text)
-        except json.JSONDecodeError:
-            lines.append("格式: 高级 JSON（解析失败，将按原文展示）")
-            lines.append(f"内容: {content_text}")
-            return "\n".join(lines)
-
-        if isinstance(preset_data, dict):
-            lines.append("格式: 高级 JSON")
-            if prompt := str(preset_data.get("prompt", "") or "").strip():
-                lines.append(f"提示词: {prompt}")
-            if aspect_ratio := str(preset_data.get("aspect_ratio", "") or "").strip():
-                lines.append(f"宽高比: {aspect_ratio}")
-            if resolution := str(preset_data.get("resolution", "") or "").strip():
-                lines.append(f"分辨率: {resolution}")
-            if description := str(preset_data.get("description", "") or "").strip():
-                lines.append(f"描述: {description}")
-            lines.append(f"原始内容: {content_text}")
-            return "\n".join(lines)
-
-    lines.append("格式: 简单提示词")
-    lines.append(f"内容: {content_text}")
-    return "\n".join(lines)
-
-
-def _format_persona_detail(name: str, persona: Any) -> str:
-    """Format one persona's full content for query results."""
-    lines = [f"👤 人设详情: {name}"]
-    lines.append(f"提示词: {persona.prompt}")
-    lines.append(f"参考图: {persona.image or '无'}")
-    return "\n".join(lines)
-
-
-def _validate_preset_content(content: str) -> str | None:
-    """Validate preset content when it is written by an LLM tool."""
-    if not content.startswith("{"):
-        return None
-
-    try:
-        preset_data = json.loads(content)
-    except json.JSONDecodeError as exc:
-        return f"高级 JSON 预设格式错误: {exc}"
-
-    if not isinstance(preset_data, dict):
-        return "高级 JSON 预设必须是对象"
-    if not str(preset_data.get("prompt", "") or "").strip():
-        return "高级 JSON 预设必须包含非空 prompt 字段"
-
-    aspect_ratio = str(preset_data.get("aspect_ratio", "") or "").strip()
-    if aspect_ratio and aspect_ratio not in ASPECT_RATIO_OPTIONS:
-        return f"高级 JSON 预设的 aspect_ratio 不支持: {aspect_ratio}"
-
-    resolution = str(preset_data.get("resolution", "") or "").strip()
-    if resolution and resolution not in RESOLUTION_OPTIONS:
-        return f"高级 JSON 预设的 resolution 不支持: {resolution}"
-
-    return None
-
-
 @pydantic_dataclass
 class PresetQueryTool(FunctionTool[AstrAgentContext]):
     """Preset and persona query tool callable by the LLM."""
 
     name: str = "query_image_presets"
     description: str = (
-        "查询生图预设或人设。默认只返回名称列表；当需要了解某个预设或人设的具体内容时，"
-        "填写 name 查看详情。查询到的预设名称可用于 generate_image 的 preset 参数，人设名称可用于 persona 参数。"
+        "查询可用的生图预设或人设。默认返回名称列表；填写 name 查看某个预设或人设的详情。"
+        "查询到的预设名称可用于 generate_image 的 preset 参数，人设名称可用于 persona 参数。"
     )
     parameters: dict = Field(
         default_factory=lambda: {
@@ -856,7 +772,7 @@ class PresetQueryTool(FunctionTool[AstrAgentContext]):
                 },
                 "name": {
                     "type": "string",
-                    "description": "可选。填写后查看指定预设或人设的具体内容；留空时只返回名称列表。",
+                    "description": "可选。填写后查看指定预设或人设的详情；留空只返回名称列表。",
                 },
             },
             "required": [],
@@ -920,8 +836,12 @@ class PresetQueryTool(FunctionTool[AstrAgentContext]):
         if not plugin.config_manager.presets:
             return "📋 当前没有预设"
         lines = ["📋 预设列表:"]
-        for idx, preset_name in enumerate(plugin.config_manager.presets, 1):
-            lines.append(f"{idx}. {preset_name}")
+        for idx, (preset_name, preset) in enumerate(
+            plugin.config_manager.presets.items(),
+            1,
+        ):
+            image_mark = "有参考图" if preset.image else "无参考图"
+            lines.append(f"{idx}. {preset_name} [{image_mark}]")
         return "\n".join(lines)
 
 
@@ -931,11 +851,8 @@ class PresetEditTool(FunctionTool[AstrAgentContext]):
 
     name: str = "edit_image_presets"
     description: str = (
-        "创建或删除生图预设。支持两种预设格式："
-        "1) 简单格式：name + prompt，prompt 直接写普通提示词；"
-        "2) 高级 JSON 格式：prompt 写 JSON 字符串，如 "
-        '{"prompt":"提示词","aspect_ratio":"16:9","resolution":"2K","description":"描述"}。'
-        "只编辑预设，不编辑人设。"
+        "创建或删除生图预设。创建时用 prompt 传入提示词，并可选用 aspect_ratio、"
+        "resolution 和 reference_image 补充预设参数。只编辑预设，不编辑人设。"
     )
     parameters: dict = Field(
         default_factory=lambda: {
@@ -952,7 +869,19 @@ class PresetEditTool(FunctionTool[AstrAgentContext]):
                 },
                 "prompt": {
                     "type": "string",
-                    "description": '创建预设时必填。可填写普通提示词，或填写高级 JSON 字符串：{"prompt":"提示词","aspect_ratio":"16:9","resolution":"2K","description":"描述"}。',
+                    "description": "创建预设时必填的预设提示词，直接填写普通提示词文本。",
+                },
+                "aspect_ratio": {
+                    "type": "string",
+                    "description": f"可选。预设宽高比，可选值：{'、'.join(ASPECT_RATIO_OPTIONS)}。",
+                },
+                "resolution": {
+                    "type": "string",
+                    "description": f"可选。预设分辨率，可选值：{'、'.join(RESOLUTION_OPTIONS)}。",
+                },
+                "reference_image": {
+                    "type": "string",
+                    "description": "可选。预设参考图，支持 http(s) 图片 URL。",
                 },
             },
             "required": ["action", "name"],
@@ -991,9 +920,17 @@ class PresetEditTool(FunctionTool[AstrAgentContext]):
             prompt = str(kwargs.get("prompt", "") or "").strip()
             if not prompt:
                 return "❌ 请提供预设内容"
-            if error := _validate_preset_content(prompt):
+            ratio = str(kwargs.get("aspect_ratio", "") or "").strip()
+            size = str(kwargs.get("resolution", "") or "").strip()
+            if error := validate_preset_options(ratio, size):
                 return f"❌ {error}"
-            plugin.config_manager.save_preset(name, prompt)
+            plugin.config_manager.save_preset_template(
+                name=name,
+                prompt=prompt,
+                aspect_ratio=ratio,
+                resolution=size,
+                image=str(kwargs.get("reference_image", "") or "").strip(),
+            )
             return f"✅ 预设已保存: {name}"
 
         if action == "delete_preset":
@@ -1012,9 +949,9 @@ class ImageTaskTool(FunctionTool[AstrAgentContext]):
 
     name: str = "manage_image_tasks"
     description: str = (
-        "管理当前会话的生图任务。list 只列出正在进行的任务；"
-        "detail 可查看仍保留记录的进行中或已结束任务；"
-        "cancel 只能取消仍在排队/运行/取消中的任务。"
+        "管理当前会话的生图任务。list 列出正在进行的任务；"
+        "detail 查看进行中或已结束任务的详情；cancel 取消仍在排队或运行中的任务。"
+        "已发送给用户的结果不要重复发送。"
     )
     parameters: dict = Field(
         default_factory=lambda: {
@@ -1028,7 +965,7 @@ class ImageTaskTool(FunctionTool[AstrAgentContext]):
                 },
                 "task": {
                     "type": "string",
-                    "description": "任务编号或任务ID。detail 和 cancel 时填写；编号来自 list 返回的正在进行任务列表。已结束任务只能用任务ID查看详情。",
+                    "description": "任务编号或任务ID。detail 和 cancel 时填写；编号取自 list 的结果，已结束任务只能用任务ID。",
                 },
             },
             "required": [],
@@ -1109,6 +1046,64 @@ class ImageTaskTool(FunctionTool[AstrAgentContext]):
         return "❌ 不支持的操作，请使用 list、detail 或 cancel"
 
 
+@pydantic_dataclass
+class DeliverySendMessageToUserTool(SendMessageToUserTool):
+    """Proactive-delivery variant of `send_message_to_user`.
+
+    Whether a proactive turn reports its result is the AI's own decision, so this
+    variant only records what the AI actually delivered (for task bookkeeping)
+    and refuses to deliver the same content twice within one run.
+    """
+
+    delivered: bool = False
+    delivered_paths: list[str] = Field(default_factory=list)
+    sent_signatures: list[str] = Field(default_factory=list)
+
+    async def call(
+        self,
+        context: ContextWrapper[AstrAgentContext],
+        **kwargs: Any,
+    ) -> ToolExecResult:
+        """Deliver the message unless the same content was already delivered."""
+        messages = kwargs.get("messages")
+        if not isinstance(messages, list):
+            messages = []
+        image_paths = [
+            str(item.get("path") or item.get("url"))
+            for item in messages
+            if isinstance(item, dict)
+            and (item.get("path") or item.get("url"))
+            and str(item.get("type", "")).lower() != "plain"
+        ]
+        delivered = {
+            os.path.normcase(os.path.normpath(path)) for path in self.delivered_paths
+        }
+        repeated = any(
+            os.path.normcase(os.path.normpath(path)) in delivered
+            for path in image_paths
+        )
+        signature = json.dumps(
+            messages, ensure_ascii=False, sort_keys=True, default=str
+        )
+        if repeated or signature in self.sent_signatures:
+            logger.warning(f"{LOG} 已拒绝同一次运行内重复发送的内容")
+            return (
+                "error: this content was already sent to the user in this turn; "
+                "do not send it again."
+            )
+
+        result = await super().call(context, **kwargs)
+        if isinstance(result, str) and result.lstrip().startswith("error"):
+            return result
+
+        self.sent_signatures.append(signature)
+        self.delivered = True
+        for path in image_paths:
+            if path not in self.delivered_paths:
+                self.delivered_paths.append(path)
+        return result
+
+
 def adjust_tool_parameters(
     tool: FunctionTool[AstrAgentContext], capabilities: ImageCapability
 ) -> None:
@@ -1126,7 +1121,11 @@ def adjust_tool_parameters(
             logger.debug(f"{LOG} 适配器不支持{label}，已从工具参数中移除")
 
     if not (capabilities & ImageCapability.IMAGE_TO_IMAGE):
-        for key in ("avatar_references", "reference_images"):
+        for key in (
+            "avatar_references",
+            "reference_images",
+            "use_context_images",
+        ):
             props.pop(key, None)
         logger.debug(f"{LOG} 适配器不支持参考图，已从工具参数中移除参考图相关参数")
 

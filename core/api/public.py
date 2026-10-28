@@ -10,15 +10,15 @@ from astrbot.api import logger
 from ..config.templates import (
     build_generation_prompt,
     extract_templates_from_prompt,
-    find_named_entry,
     format_template_summary,
     normalize_name_items,
-    parse_preset_prompt,
+    resolve_named_templates,
 )
 from ..generation.novelai_assets import prepare_novelai_assets
 from ..generation.novelai_options import validate_novelai_options
+from ..generation.options import is_explicit_size
 from ..generation.reference_collector import (
-    collect_reference_images_from_personas,
+    collect_reference_images_from_templates,
     deduplicate_reference_images,
     download_reference_images,
 )
@@ -176,7 +176,7 @@ class ImageGenerationPublicAPI:
             final_resolution,
             matched_presets,
             matched_personas,
-            persona_images,
+            template_images,
             parse_error,
         ) = self._build_prompt(
             prompt=prompt,
@@ -184,6 +184,12 @@ class ImageGenerationPublicAPI:
             personas=personas,
             aspect_ratio=str(final_aspect_ratio),
             resolution=str(final_resolution),
+            fixed_aspect_ratio=(
+                str(aspect_ratio) if is_explicit_size(aspect_ratio) else None
+            ),
+            fixed_resolution=(
+                str(resolution) if is_explicit_size(resolution) else None
+            ),
         )
         if parse_error:
             return self._submit_error(
@@ -205,7 +211,6 @@ class ImageGenerationPublicAPI:
                 scope,
                 is_admin=safe_is_admin,
                 requested_count=requested_count,
-                update_timestamp=False,
             )
             if isinstance(check_result, str):
                 logger.info(
@@ -271,13 +276,12 @@ class ImageGenerationPublicAPI:
                     check_result,
                 )
 
-        usage_reserved = use_usage_scope
         task_created = False
         try:
             references = await self._collect_reference_images(
                 reference_image_sources=reference_image_sources,
                 reference_image_data=reference_image_data,
-                persona_images=persona_images,
+                template_images=template_images,
                 task_id=task_id,
                 unified_msg_origin=scope,
                 request_source=request_source,
@@ -323,28 +327,33 @@ class ImageGenerationPublicAPI:
                 )
             )
         except GenerationTaskCreationError as exc:
-            # create_generation_task() rolls back quota reservation on creation failure.
-            usage_reserved = False
+            # create_generation_task() rolls back its own quota reservation.
             return self._submit_error(
                 TASK_CREATION_ERROR_CODES.get(exc.code, PublicAPIResultCode.REJECTED),
                 exc.message,
                 error=exc.code,
             )
         except asyncio.CancelledError:
-            if usage_reserved and not task_created:
-                plugin.usage_manager.release_reserved_usage(
-                    scope,
-                    is_admin=safe_is_admin,
-                    count=requested_count,
-                )
+            if not task_created:
+                record = plugin.task_manager.get_generation_task(task_id)
+                if record and record.quota_date:
+                    plugin.usage_manager.release_reserved_usage(
+                        scope,
+                        is_admin=safe_is_admin,
+                        count=requested_count,
+                        quota_date=record.quota_date,
+                    )
             raise
         except Exception as exc:
-            if usage_reserved and not task_created:
-                plugin.usage_manager.release_reserved_usage(
-                    scope,
-                    is_admin=safe_is_admin,
-                    count=requested_count,
-                )
+            if not task_created:
+                record = plugin.task_manager.get_generation_task(task_id)
+                if record and record.quota_date:
+                    plugin.usage_manager.release_reserved_usage(
+                        scope,
+                        is_admin=safe_is_admin,
+                        count=requested_count,
+                        quota_date=record.quota_date,
+                    )
             logger.error(
                 f"{log_prefix('PublicAPI', task_id)} "
                 + format_log_event(
@@ -482,7 +491,8 @@ class ImageGenerationPublicAPI:
             code=PublicAPIResultCode.from_task_status(record.status.value).value,
             message=record.error or record.message or record.status_label,
             task_id=normalized_task_id,
-            paths=list(record.result_paths),
+            # Failed records may keep audit-blocked images for WebUI review only.
+            paths=[],
             error=record.error,
         )
 
@@ -576,7 +586,9 @@ class ImageGenerationPublicAPI:
             reference_image_count=record.reference_image_count,
             aspect_ratio=record.aspect_ratio,
             resolution=record.resolution,
-            result_paths=list(record.result_paths),
+            result_paths=(
+                list(record.result_paths) if record.status.value == "succeeded" else []
+            ),
             error=record.error,
             message=record.message,
             created_at=record.created_at,
@@ -612,6 +624,8 @@ class ImageGenerationPublicAPI:
         personas: str | list[str] | None,
         aspect_ratio: str,
         resolution: str,
+        fixed_aspect_ratio: str | None = None,
+        fixed_resolution: str | None = None,
     ) -> tuple[
         str,
         str,
@@ -621,60 +635,39 @@ class ImageGenerationPublicAPI:
         list[tuple[str, str]],
         str | None,
     ]:
-        preset_prompts: list[str] = []
-        persona_prompts: list[str] = []
-        matched_presets: list[str] = []
-        matched_personas: list[str] = []
-        persona_images: list[tuple[str, str]] = []
         config_manager = self._plugin.config_manager
-
-        for preset_name in normalize_name_items(presets):
-            matched_preset = find_named_entry(
-                config_manager.presets,
-                preset_name,
-            )
-            if not matched_preset:
-                return (
-                    "",
-                    aspect_ratio,
-                    resolution,
-                    [],
-                    [],
-                    [],
-                    f"预设不存在: {preset_name}",
-                )
-            preset_prompt, aspect_ratio, resolution = parse_preset_prompt(
-                config_manager.presets[matched_preset],
-                aspect_ratio,
-                resolution,
-            )
-            if preset_prompt:
-                preset_prompts.append(preset_prompt)
-            matched_presets.append(matched_preset)
-
-        for persona_name in normalize_name_items(personas):
-            matched_persona = find_named_entry(
-                config_manager.personas,
-                persona_name,
-            )
-            if not matched_persona:
-                return (
-                    "",
-                    aspect_ratio,
-                    resolution,
-                    [],
-                    [],
-                    [],
-                    f"人设不存在: {persona_name}",
-                )
-            persona = config_manager.personas[matched_persona]
-            persona_prompt = persona.prompt.strip()
-            if persona_prompt:
-                persona_prompts.append(persona_prompt)
-            if persona.image:
-                persona_images.append((matched_persona, persona.image))
-            matched_personas.append(matched_persona)
-
+        (
+            preset_prompts,
+            aspect_ratio,
+            resolution,
+            matched_presets,
+            template_images,
+            error,
+        ) = resolve_named_templates(
+            normalize_name_items(presets),
+            config_manager.presets,
+            kind="preset",
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+        )
+        if error:
+            return "", aspect_ratio, resolution, [], [], [], error
+        (
+            persona_prompts,
+            aspect_ratio,
+            resolution,
+            matched_personas,
+            persona_images,
+            error,
+        ) = resolve_named_templates(
+            normalize_name_items(personas),
+            config_manager.personas,
+            kind="persona",
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+        )
+        if error:
+            return "", aspect_ratio, resolution, [], [], [], error
         extra_prompt = str(prompt or "").strip()
         if config_manager.match_templates_in_prompt_body:
             (
@@ -685,7 +678,7 @@ class ImageGenerationPublicAPI:
                 extra_persona_prompts,
                 extra_presets,
                 extra_personas,
-                extra_persona_images,
+                extra_template_images,
             ) = extract_templates_from_prompt(
                 extra_prompt,
                 config_manager.prompt_body_presets(),
@@ -698,7 +691,12 @@ class ImageGenerationPublicAPI:
             persona_prompts.extend(extra_persona_prompts)
             matched_presets.extend(extra_presets)
             matched_personas.extend(extra_personas)
-            persona_images.extend(extra_persona_images)
+            template_images.extend(extra_template_images)
+
+        if fixed_aspect_ratio:
+            aspect_ratio = fixed_aspect_ratio
+        if fixed_resolution:
+            resolution = fixed_resolution
 
         final_prompt = build_generation_prompt(
             preset_prompts=preset_prompts,
@@ -711,7 +709,7 @@ class ImageGenerationPublicAPI:
             resolution,
             matched_presets,
             matched_personas,
-            persona_images,
+            template_images,
             None,
         )
 
@@ -720,7 +718,7 @@ class ImageGenerationPublicAPI:
         *,
         reference_image_sources: Any,
         reference_image_data: list[ImageData] | None,
-        persona_images: list[tuple[str, str]],
+        template_images: list[tuple[str, str]],
         task_id: str,
         unified_msg_origin: str | None = None,
         request_source: str = DEFAULT_SOURCE,
@@ -730,7 +728,7 @@ class ImageGenerationPublicAPI:
             return []
         capabilities = plugin.generator.adapter.get_capabilities()
         has_references = bool(
-            persona_images or reference_image_sources or reference_image_data
+            template_images or reference_image_sources or reference_image_data
         )
         if not (capabilities & ImageCapability.IMAGE_TO_IMAGE):
             if has_references:
@@ -748,11 +746,11 @@ class ImageGenerationPublicAPI:
         workspace_dir = plugin.image_processor.workspace_dir_for_origin(
             unified_msg_origin
         )
-        if persona_images:
+        if template_images:
             images_data.extend(
-                await collect_reference_images_from_personas(
+                await collect_reference_images_from_templates(
                     plugin.image_processor,
-                    persona_images,
+                    template_images,
                     task_id=task_id,
                     log_context="PublicAPI",
                     workspace_dir=workspace_dir,

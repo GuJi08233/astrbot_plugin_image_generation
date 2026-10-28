@@ -4,29 +4,11 @@ import asyncio
 from collections.abc import Iterable
 from io import BytesIO
 
+from astrbot.api import logger
 from PIL import Image
 
-from astrbot.api import logger
-
 from ..shared.constants import SUPPORTED_ASPECT_RATIOS, SUPPORTED_RESOLUTIONS
-from ..shared.logging import (
-    log_prefix,
-)
-from ..shared.logging import (
-    mask_sensitive as mask_sensitive,
-)
-from ..shared.logging import (
-    safe_log_error_body as safe_log_error_body,
-)
-from ..shared.logging import (
-    safe_log_mapping as safe_log_mapping,
-)
-from ..shared.logging import (
-    safe_log_text as safe_log_text,
-)
-from ..shared.logging import (
-    safe_log_url as safe_log_url,
-)
+from ..shared.logging import log_prefix, safe_log_error_body
 from ..shared.types import ImageData
 
 ALLOWED_ASPECT_RATIOS = set(SUPPORTED_ASPECT_RATIOS)
@@ -63,7 +45,7 @@ def detect_mime_type(data: bytes) -> str:
         return "image/jpeg"
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
         return "image/png"
-    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+    if data.startswith((b"GIF87a", b"GIF89a")):
         return "image/gif"
     if len(data) > 12 and data[4:8] == b"ftyp":
         brand = data[8:12]
@@ -86,9 +68,7 @@ def _sync_convert_image_format(
 
         if img.mode in ("RGBA", "LA", "P"):
             background = Image.new("RGB", img.size, (255, 255, 255))
-            if img.mode == "P":
-                img = img.convert("RGBA")
-            elif img.mode == "LA":
+            if img.mode != "RGBA":
                 img = img.convert("RGBA")
             background.paste(img, mask=img.split()[3])
             img = background
@@ -132,11 +112,6 @@ __all__ = (
     "convert_image_format",
     "convert_images_batch",
     "detect_mime_type",
-    "mask_sensitive",
-    "safe_log_error_body",
-    "safe_log_mapping",
-    "safe_log_text",
-    "safe_log_url",
     "validate_aspect_ratio",
     "validate_resolution",
 )

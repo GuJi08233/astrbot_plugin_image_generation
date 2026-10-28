@@ -1,0 +1,20 @@
+{
+  "name": "astrbot-plugin-image-generation-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@mdi/js": "^7.4.47",
+    "vue": "^3.5.13",
+    "vuetify": "^3.7.11"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "vite": "^6.0.7",
+    "vite-plugin-vuetify": "^2.0.4"
+  }
+}

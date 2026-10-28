@@ -7,8 +7,6 @@ import base64
 import hashlib
 import json
 import math
-import mimetypes
-from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -22,41 +20,21 @@ from astrbot.api.web import (
     request,
 )
 
+from ..adapters.generator import create_adapter
+from ..generation.image_processor import GENERATED_IMAGE_EXTENSIONS
 from ..generation.novelai_options import validate_novelai_options
 from ..shared.logging import log_prefix, safe_log_text
 from ..shared.types import AdapterType, ImageCapability
 from ..tasks.models import GenerationTaskRecord
+from .payload import PagePayloadMixin
+from .stats import PageStatsMixin
 
 PLUGIN_NAME = "astrbot_plugin_image_generation"
 PAGE_PREVIEW_MAX_BYTES = 12 * 1024 * 1024
-NEGATIVE_PROMPT_ADAPTER_TYPES = {
-    AdapterType.OPENAI,
-    AdapterType.OPENAI_CHAT,
-    AdapterType.NOVELAI,
-    AdapterType.SILICONFLOW,
-    AdapterType.MODELSCOPE,
-}
 LOG = log_prefix("Page")
-PAGE_IMAGE_EXTENSIONS = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/gif": ".gif",
-    "image/webp": ".webp",
-    "image/heic": ".heic",
-    "image/heif": ".heif",
-}
-PAGE_IMAGE_MIME_TYPES = {
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".png": "image/png",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-    ".heic": "image/heic",
-    ".heif": "image/heif",
-}
 
 
-class ImageGenerationPageAPI:
+class ImageGenerationPageAPI(PagePayloadMixin, PageStatsMixin):
     """Register and serve backend endpoints used by the Dashboard Page."""
 
     def __init__(self, plugin: Any) -> None:
@@ -116,6 +94,12 @@ class ImageGenerationPageAPI:
                 "Submit image generation task from Page",
             ),
             (
+                "/page/model",
+                self.page_switch_model,
+                ["POST"],
+                "Switch the active image generation model from Page",
+            ),
+            (
                 "/page/audit/test",
                 self.page_test_audit,
                 ["POST"],
@@ -154,420 +138,70 @@ class ImageGenerationPageAPI:
                 description,
             )
 
-    def _page_datetime(self, value: Any) -> str | None:
-        """Serialize a datetime-like value for Page JSON responses."""
-        return value.isoformat(timespec="seconds") if value else None
-
-    def _page_task_payload(
-        self,
-        record: GenerationTaskRecord,
-        *,
-        include_detail: bool = False,
-    ) -> dict[str, Any]:
-        """Build a safe JSON payload for one generation task record."""
-        request_stats = record.request_stats
-        result_count = record.result_count or len(record.result_paths)
-        finished = request_stats.get("finished", 0)
-        total = request_stats.get("total", record.requested_count)
-        progress_percent = int((finished / total) * 100) if total else 0
-        template_fields = self._parse_template_fields(
-            record.preset, record.preset_label
-        )
-        payload: dict[str, Any] = {
-            "task_id": record.task_id,
-            "status": record.status.value,
-            "status_label": record.status_label,
-            "active": record.is_active,
-            "source": record.source,
-            "unified_msg_origin": str(record.unified_msg_origin or "").strip(),
-            "model": record.model or "",
-            "message": record.message,
-            "error": record.error,
-            "prompt_summary": record.prompt_summary,
-            "reference_image_count": record.reference_image_count,
-            "requested_count": record.requested_count,
-            "result_count": result_count,
-            "aspect_ratio": record.aspect_ratio,
-            "resolution": record.resolution,
-            "preset": record.preset or "",
-            "preset_label": record.preset_label,
-            "presets": template_fields["presets"],
-            "personas": template_fields["personas"],
-            "template_summary": template_fields["template_summary"],
-            "template_label": template_fields["template_label"],
-            "created_at": self._page_datetime(record.created_at),
-            "started_at": self._page_datetime(record.started_at),
-            "finished_at": self._page_datetime(record.finished_at),
-            "duration_seconds": record.duration_seconds,
-            "queued_seconds": record.queued_seconds,
-            "current_index": record.current_index,
-            "retry_attempt": record.retry_attempt,
-            "max_retry_attempts": record.max_retry_attempts,
-            "request_stats": request_stats,
-            "progress_percent": max(0, min(progress_percent, 100)),
-            "result_images": [
-                self._page_image_payload(record, index, path)
-                for index, path in enumerate(record.result_paths, 1)
-            ],
-            "audit_results": [
-                dict(entry) for entry in record.audit_results if isinstance(entry, dict)
-            ],
-        }
-        if include_detail:
-            payload["prompt"] = record.prompt or record.prompt_summary or ""
-            payload["items"] = [
-                {
-                    "index": item.index,
-                    "status": item.status.value,
-                    "result_count": item.result_count,
-                    "error": item.error,
-                    "retry_attempts": item.retry_attempts,
-                    "max_retry_attempts": item.max_retry_attempts,
-                }
-                for item in sorted(
-                    record.items.values(), key=lambda task_item: task_item.index
-                )
-            ]
-        return payload
-
-    def _uploaded_image_path(self, token: str) -> Path | None:
-        """Resolve one Page upload token to a safe local path."""
-        safe_token = str(token or "").strip()
-        if not safe_token or any(part in safe_token for part in ("/", "\\", "..")):
-            return None
-        path = (self.plugin.page_upload_dir / safe_token).resolve()
-        try:
-            path.relative_to(self.plugin.page_upload_dir.resolve())
-        except ValueError:
-            return None
-        if not path.is_file():
-            return None
-        return path
-
-    def _result_image_path(
-        self,
-        record: GenerationTaskRecord,
-        image_index: str | int,
-    ) -> Path | None:
-        """Resolve one generated image index to a safe result path."""
-        try:
-            index = int(str(image_index).strip())
-        except (TypeError, ValueError):
-            return None
-        if index < 1 or index > len(record.result_paths):
-            return None
-        path = Path(record.result_paths[index - 1]).resolve()
-        allowed_roots = [
-            self.plugin.image_temp_dir.resolve(),
-            self.plugin.astrbot_temp_dir.resolve(),
-        ]
-        for root in allowed_roots:
-            try:
-                path.relative_to(root)
-                if path.is_file():
-                    return path
-            except ValueError:
-                continue
-        return None
-
-    def _page_image_mime_type(self, path: Path) -> str:
-        """Infer a safe image MIME type from a result path."""
-        suffix = path.suffix.lower()
-        if suffix in PAGE_IMAGE_MIME_TYPES:
-            return PAGE_IMAGE_MIME_TYPES[suffix]
-        guessed, _ = mimetypes.guess_type(path.name)
-        if guessed and guessed.startswith("image/"):
-            return guessed
-        return "application/octet-stream"
-
-    def _page_image_payload(
-        self,
-        record: GenerationTaskRecord,
-        index: int,
-        path_value: str,
-    ) -> dict[str, Any]:
-        """Build a safe JSON payload for one generated image entry."""
-        filename = Path(path_value).name
-        path = self._result_image_path(record, index)
-        size = path.stat().st_size if path else 0
-        return {
-            "index": index,
-            "filename": filename,
-            "extension": Path(filename).suffix.lower().lstrip("."),
-            "mime_type": self._page_image_mime_type(Path(filename)),
-            "size": size,
-            "available": bool(path),
-            "download_endpoint": (
-                f"page/tasks/{record.task_id}/images/{index}/download"
-            ),
-            "preview_endpoint": (f"page/tasks/{record.task_id}/images/{index}/preview"),
-        }
-
-    def _parse_page_datetime(self, value: Any) -> datetime | None:
-        """Parse an ISO datetime string from Page query parameters."""
-        raw = str(value or "").strip()
-        if not raw:
-            return None
-        try:
-            return datetime.fromisoformat(raw.replace("Z", "+00:00")).replace(
-                tzinfo=None
-            )
-        except ValueError:
-            return None
-
-    def _gallery_items_for_record(
-        self,
-        record: GenerationTaskRecord,
-    ) -> list[dict[str, Any]]:
-        """Build gallery items from one generation task record."""
-        generated_at = (
-            self._page_datetime(record.finished_at)
-            or self._page_datetime(record.started_at)
-            or self._page_datetime(record.created_at)
-        )
-        items: list[dict[str, Any]] = []
-        for index, path_value in enumerate(record.result_paths, 1):
-            image = self._page_image_payload(record, index, path_value)
-            items.append(
-                {
-                    "id": f"{record.task_id}:{index}",
-                    "task_id": record.task_id,
-                    "status": record.status.value,
-                    "status_label": record.status_label,
-                    "source": record.source,
-                    "model": record.model or "",
-                    "prompt_summary": record.prompt_summary,
-                    "preset": record.preset or "",
-                    "preset_label": record.preset_label,
-                    "aspect_ratio": record.aspect_ratio,
-                    "resolution": record.resolution,
-                    "created_at": self._page_datetime(record.created_at),
-                    "finished_at": self._page_datetime(record.finished_at),
-                    "generated_at": generated_at,
-                    "image_index": index,
-                    **image,
-                }
-            )
-        return items
-
-    def _count_top(
-        self, counter: Counter[str], *, limit: int = 8
-    ) -> list[dict[str, Any]]:
-        """Convert a counter into a sorted top-N list for charts."""
-        return [
-            {"name": name, "count": count}
-            for name, count in counter.most_common(max(1, limit))
-            if name
-        ]
-
-    def _record_stamp(self, record: GenerationTaskRecord) -> datetime | None:
-        """Pick the best timestamp for statistics aggregation."""
-        return record.finished_at or record.started_at or record.created_at
-
-    def _build_trend_series(
-        self,
-        stamps: list[datetime],
-        *,
-        days: int,
-        now: datetime | None = None,
-    ) -> tuple[str, list[dict[str, Any]]]:
-        """Build a continuous trend series for the selected stats range.
-
-        Args:
-            stamps: Task timestamps inside the filtered window.
-            days: Selected range in days. ``1`` uses hourly buckets; other
-                positive values use daily buckets; ``0`` spans all history.
-            now: Optional clock override for deterministic tests.
+    def _available_models(self) -> list[str]:
+        """Return every selectable generation model in `provider/model` form.
 
         Returns:
-            A tuple of ``(granularity, points)`` where each point contains
-            ``key``, ``label``, ``count``, and optional ``date``/``hour``.
+            Model choices in the same format the Dashboard Page offers.
         """
-        current = now or datetime.now()
-        if days == 1:
-            end_hour = current.replace(minute=0, second=0, microsecond=0)
-            start_hour = end_hour - timedelta(hours=23)
-            bucket_counts: Counter[str] = Counter()
-            for stamp in stamps:
-                hour_key = stamp.replace(minute=0, second=0, microsecond=0)
-                if hour_key < start_hour or hour_key > end_hour:
-                    continue
-                bucket_counts[hour_key.strftime("%Y-%m-%d %H:00")] += 1
-            points: list[dict[str, Any]] = []
-            cursor = start_hour
-            while cursor <= end_hour:
-                key = cursor.strftime("%Y-%m-%d %H:00")
-                points.append(
-                    {
-                        "key": key,
-                        "date": cursor.date().isoformat(),
-                        "hour": cursor.hour,
-                        "label": cursor.strftime("%H:00"),
-                        "count": bucket_counts.get(key, 0),
-                    }
+        models: list[str] = []
+        for provider in getattr(
+            self.plugin.config_manager, "_all_provider_configs", []
+        ):
+            provider_name = provider.name.strip()
+            for model in provider.available_models:
+                models.append(f"{provider_name}/{model}" if provider_name else model)
+        return models
+
+    def _model_capabilities(self) -> dict[str, dict[str, Any]]:
+        """Return the adapter capabilities declared by each selectable model.
+
+        Returns:
+            A mapping of `provider/model` to the capability flags the Page uses
+            to enable or disable the per-model form controls, plus the
+            negative-prompt delivery mode and NovelAI default dimensions.
+        """
+        capabilities: dict[str, dict[str, Any]] = {}
+        for provider in getattr(
+            self.plugin.config_manager, "_all_provider_configs", []
+        ):
+            try:
+                provider_capabilities = create_adapter(provider).get_capabilities()
+            except ValueError:
+                # Unknown adapter types fail on submit; the Page falls back to
+                # the capability flags of the active model in that case.
+                continue
+            flags = {
+                "adapter_type": provider.type.value,
+                "supports_image_to_image": bool(
+                    provider_capabilities & ImageCapability.IMAGE_TO_IMAGE
+                ),
+                "supports_aspect_ratio": bool(
+                    provider_capabilities & ImageCapability.ASPECT_RATIO
+                ),
+                "supports_resolution": bool(
+                    provider_capabilities & ImageCapability.RESOLUTION
+                ),
+                "supports_negative_prompt": bool(
+                    provider_capabilities & ImageCapability.NEGATIVE_PROMPT
+                ),
+                "supports_novelai": provider.type == AdapterType.NOVELAI,
+                "negative_prompt_mode": (
+                    provider.extra.get("negative_prompt_mode", "prompt")
+                    if provider.type in {AdapterType.OPENAI, AdapterType.OPENAI_CHAT}
+                    else "parameter"
+                ),
+            }
+            if provider.type == AdapterType.NOVELAI:
+                flags.update(
+                    novelai_width=provider.extra.get("width", 832),
+                    novelai_height=provider.extra.get("height", 1216),
                 )
-                cursor += timedelta(hours=1)
-            return "hour", points
-
-        if days > 0:
-            end_day = current.date()
-            start_day = end_day - timedelta(days=days - 1)
-        else:
-            if not stamps:
-                end_day = current.date()
-                start_day = end_day
-            else:
-                start_day = min(stamp.date() for stamp in stamps)
-                end_day = max(stamp.date() for stamp in stamps)
-                if end_day < current.date():
-                    end_day = current.date()
-
-        day_counts: Counter[str] = Counter()
-        for stamp in stamps:
-            day_key = stamp.date().isoformat()
-            if stamp.date() < start_day or stamp.date() > end_day:
-                continue
-            day_counts[day_key] += 1
-
-        points = []
-        cursor_day = start_day
-        while cursor_day <= end_day:
-            key = cursor_day.isoformat()
-            points.append(
-                {
-                    "key": key,
-                    "date": key,
-                    "label": cursor_day.strftime("%m-%d"),
-                    "count": day_counts.get(key, 0),
-                }
-            )
-            cursor_day += timedelta(days=1)
-        return "day", points
-
-    def _page_stats_payload(self, *, days: int = 7) -> dict[str, Any]:
-        """Aggregate generation statistics from tracked task history."""
-        safe_days = max(0, int(days or 0))
-        now = datetime.now()
-        since = now - timedelta(days=safe_days) if safe_days > 0 else None
-        if safe_days == 1:
-            since = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=23)
-        records = self.plugin.task_manager.list_generation_tasks(
-            include_finished=True,
-            limit=1000,
-        )
-        filtered: list[GenerationTaskRecord] = []
-        for record in records:
-            stamp = self._record_stamp(record)
-            if since and stamp and stamp < since:
-                continue
-            filtered.append(record)
-
-        status_counter: Counter[str] = Counter()
-        source_counter: Counter[str] = Counter()
-        model_counter: Counter[str] = Counter()
-        model_success_counter: Counter[str] = Counter()
-        model_terminal_counter: Counter[str] = Counter()
-        user_counter: Counter[str] = Counter()
-        stamps: list[datetime] = []
-        total_images = 0
-        available_images = 0
-        total_duration = 0.0
-        duration_samples = 0
-        active_count = 0
-        success_count = 0
-        failed_count = 0
-        cancelled_count = 0
-
-        for record in filtered:
-            model_name = record.model or "unknown"
-            status_counter[record.status.value] += 1
-            source_counter[record.source or "unknown"] += 1
-            model_counter[model_name] += 1
-            user_counter[
-                str(record.unified_msg_origin or "").strip() or "anonymous"
-            ] += 1
-            stamp = self._record_stamp(record)
-            if stamp:
-                stamps.append(stamp)
-            if record.is_active:
-                active_count += 1
-            if record.status.value == "succeeded":
-                success_count += 1
-                model_success_counter[model_name] += 1
-                model_terminal_counter[model_name] += 1
-            elif record.status.value == "failed":
-                failed_count += 1
-                model_terminal_counter[model_name] += 1
-            elif record.status.value == "cancelled":
-                cancelled_count += 1
-                model_terminal_counter[model_name] += 1
-            total_images += record.result_count or len(record.result_paths)
-            for index, path_value in enumerate(record.result_paths, 1):
-                if self._result_image_path(record, index):
-                    available_images += 1
-            if record.duration_seconds is not None:
-                total_duration += float(record.duration_seconds)
-                duration_samples += 1
-
-        terminal_count = success_count + failed_count + cancelled_count
-        success_rate = (
-            round((success_count / terminal_count) * 100, 1) if terminal_count else 0.0
-        )
-        avg_duration = (
-            round(total_duration / duration_samples, 2) if duration_samples else 0.0
-        )
-        granularity, trend_points = self._build_trend_series(
-            stamps,
-            days=safe_days,
-            now=now,
-        )
-        return {
-            "days": safe_days,
-            "trend_granularity": granularity,
-            "summary": {
-                "total_tasks": len(filtered),
-                "active_tasks": active_count,
-                "success_tasks": success_count,
-                "failed_tasks": failed_count,
-                "cancelled_tasks": cancelled_count,
-                "success_rate": success_rate,
-                "total_images": total_images,
-                "available_images": available_images,
-                "avg_duration_seconds": avg_duration,
-                "unique_users": len(
-                    [name for name in user_counter if name != "anonymous"]
-                ),
-                "unique_models": len(
-                    [name for name in model_counter if name != "unknown"]
-                ),
-            },
-            "status_distribution": self._count_top(status_counter, limit=10),
-            "source_distribution": self._count_top(source_counter, limit=10),
-            "model_distribution": [
-                {
-                    "name": name,
-                    "count": count,
-                    "success_count": model_success_counter.get(name, 0),
-                    "terminal_count": model_terminal_counter.get(name, 0),
-                    "success_rate": (
-                        round(
-                            (
-                                model_success_counter.get(name, 0)
-                                / model_terminal_counter[name]
-                            )
-                            * 100,
-                            1,
-                        )
-                        if model_terminal_counter.get(name, 0)
-                        else 0.0
-                    ),
-                }
-                for name, count in model_counter.most_common(10)
-                if name
-            ],
-            "user_distribution": self._count_top(user_counter, limit=10),
-            "trend": trend_points,
-        }
+            provider_name = provider.name.strip()
+            for model in provider.available_models:
+                model_key = f"{provider_name}/{model}" if provider_name else model
+                capabilities[model_key] = {**flags, "model": model}
+        return capabilities
 
     async def page_state(self):
         """Return plugin state used to initialize the Dashboard Page.
@@ -585,61 +219,13 @@ class ImageGenerationPageAPI:
         current_model = (
             f"{adapter_config.name}/{adapter_config.model}" if adapter_config else ""
         )
-        available_models: list[str] = []
-        model_settings: dict[str, dict[str, Any]] = {}
-        for provider in getattr(plugin.config_manager, "_all_provider_configs", []):
-            provider_name = provider.name.strip()
-            for model in provider.available_models:
-                model_name = f"{provider_name}/{model}" if provider_name else model
-                available_models.append(model_name)
-                model_settings[model_name] = {
-                    "adapter_type": provider.type.value,
-                    "model": model,
-                    "supports_image_to_image": bool(
-                        provider.capability_options.get("image_to_image", False)
-                    ),
-                    "supports_negative_prompt": provider.type
-                    in NEGATIVE_PROMPT_ADAPTER_TYPES,
-                    "negative_prompt_mode": (
-                        provider.extra.get("negative_prompt_mode", "prompt")
-                        if provider.type
-                        in {AdapterType.OPENAI, AdapterType.OPENAI_CHAT}
-                        else "parameter"
-                    ),
-                }
-                if provider.type == AdapterType.NOVELAI:
-                    model_settings[model_name].update(
-                        width=provider.extra.get("width", 832),
-                        height=provider.extra.get("height", 1216),
-                    )
-        if adapter_config and current_model not in model_settings:
-            model_settings[current_model] = {
-                "adapter_type": adapter_config.type.value,
-                "model": adapter_config.model,
-                "supports_image_to_image": bool(
-                    adapter_config.capability_options.get("image_to_image", False)
-                ),
-                "supports_negative_prompt": adapter_config.type
-                in NEGATIVE_PROMPT_ADAPTER_TYPES,
-                "negative_prompt_mode": (
-                    adapter_config.extra.get("negative_prompt_mode", "prompt")
-                    if adapter_config.type
-                    in {AdapterType.OPENAI, AdapterType.OPENAI_CHAT}
-                    else "parameter"
-                ),
-            }
-            if adapter_config.type == AdapterType.NOVELAI:
-                model_settings[current_model].update(
-                    width=adapter_config.extra.get("width", 832),
-                    height=adapter_config.extra.get("height", 1216),
-                )
         return json_response(
             {
                 "initialized": bool(plugin.generator and plugin.generator.adapter),
                 "has_api_key": plugin.has_required_api_key(),
                 "current_model": current_model,
-                "available_models": available_models,
-                "model_settings": model_settings,
+                "available_models": self._available_models(),
+                "model_capabilities": self._model_capabilities(),
                 "default_image_count": plugin.config_manager.default_image_count,
                 "max_image_count": plugin.config_manager.max_image_count,
                 "default_aspect_ratio": plugin.config_manager.default_aspect_ratio,
@@ -651,9 +237,16 @@ class ImageGenerationPageAPI:
                     capabilities & ImageCapability.ASPECT_RATIO
                 ),
                 "supports_resolution": bool(capabilities & ImageCapability.RESOLUTION),
+                "supports_negative_prompt": bool(
+                    capabilities & ImageCapability.NEGATIVE_PROMPT
+                ),
                 "presets": [
-                    {"name": name, "summary": safe_log_text(value, 120)}
-                    for name, value in plugin.config_manager.presets.items()
+                    {
+                        "name": name,
+                        "summary": safe_log_text(preset.prompt, 120),
+                        "has_image": bool(preset.image),
+                    }
+                    for name, preset in plugin.config_manager.presets.items()
                 ],
                 "personas": [
                     {
@@ -688,91 +281,6 @@ class ImageGenerationPageAPI:
         except ValueError:
             return error_response("days 必须是非负整数", status_code=400)
         return json_response(self._page_stats_payload(days=days))
-
-    def _parse_template_fields(
-        self,
-        preset: str | None,
-        preset_label: str | None,
-    ) -> dict[str, Any]:
-        """Parse stored template summary into preset and persona names.
-
-        Args:
-            preset: Stored template summary text (names or labeled summary).
-            preset_label: Stored template category label.
-
-        Returns:
-            A dict with presets, personas, and display values.
-        """
-        summary = str(preset or "").strip()
-        label = str(preset_label or "").strip()
-        presets: list[str] = []
-        personas: list[str] = []
-
-        if summary:
-            if "预设:" in summary or "人设:" in summary:
-                for part in summary.split("；"):
-                    chunk = part.strip()
-                    if chunk.startswith("预设:"):
-                        names = chunk[len("预设:") :].strip()
-                        if names:
-                            presets.extend(
-                                [
-                                    name.strip()
-                                    for name in names.replace(",", "、").split("、")
-                                    if name.strip()
-                                ]
-                            )
-                    elif chunk.startswith("人设:"):
-                        names = chunk[len("人设:") :].strip()
-                        if names:
-                            personas.extend(
-                                [
-                                    name.strip()
-                                    for name in names.replace(",", "、").split("、")
-                                    if name.strip()
-                                ]
-                            )
-            elif label in {"预设", "preset"}:
-                presets = [
-                    name.strip()
-                    for name in summary.replace(",", "、").split("、")
-                    if name.strip()
-                ]
-            elif label in {"人设", "persona"}:
-                personas = [
-                    name.strip()
-                    for name in summary.replace(",", "、").split("、")
-                    if name.strip()
-                ]
-            elif label in {"预设/人设", "preset/persona"}:
-                # Older mixed labels without structured text: keep as summary only.
-                pass
-            else:
-                # Unknown label: treat the summary as a generic template name list.
-                presets = [
-                    name.strip()
-                    for name in summary.replace(",", "、").split("、")
-                    if name.strip()
-                ]
-
-        display_parts: list[str] = []
-        if presets:
-            display_parts.append(f"预设: {'、'.join(presets)}")
-        if personas:
-            display_parts.append(f"人设: {'、'.join(personas)}")
-        display = "；".join(display_parts) if display_parts else summary
-
-        return {
-            "presets": presets,
-            "personas": personas,
-            "template_summary": display or summary,
-            "template_label": label
-            or (
-                "预设/人设"
-                if presets and personas
-                else ("预设" if presets else ("人设" if personas else ""))
-            ),
-        }
 
     async def page_tasks(self):
         """Return generation tasks for the Dashboard Page.
@@ -824,9 +332,10 @@ class ImageGenerationPageAPI:
             if status_filter == "active":
                 if not record.is_active:
                     continue
-            elif status_filter not in {"", "all"}:
-                if record.status.value != status_filter:
-                    continue
+            elif status_filter not in {"", "all"} and (
+                record.status.value != status_filter
+            ):
+                continue
 
             if source_filter and source_filter not in record_source.lower():
                 continue
@@ -987,6 +496,9 @@ class ImageGenerationPageAPI:
             return error_response("days 必须是非负整数", status_code=400)
         limit = max(1, min(request.query.get("limit", 60, type=int), 200))
         offset = max(0, request.query.get("offset", 0, type=int))
+        available_only = str(
+            request.query.get("available_only", "") or ""
+        ).strip().lower() not in {"", "0", "false", "no"}
         since = self._parse_page_datetime(request.query.get("since"))
         until = self._parse_page_datetime(request.query.get("until"))
         if days > 0 and since is None:
@@ -1032,6 +544,11 @@ class ImageGenerationPageAPI:
                     continue
             items.extend(self._gallery_items_for_record(record))
 
+        hidden_count = 0
+        if available_only:
+            hidden_count = sum(1 for item in items if not item.get("available"))
+            items = [item for item in items if item.get("available")]
+
         total = len(items)
         page_items = items[offset : offset + limit]
         return json_response(
@@ -1040,9 +557,8 @@ class ImageGenerationPageAPI:
                 "total": total,
                 "offset": offset,
                 "limit": limit,
-                "available_count": sum(
-                    1 for item in page_items if item.get("available")
-                ),
+                "available_count": sum(1 for item in items if item.get("available")),
+                "hidden_count": hidden_count,
                 "models": sorted(model_names),
             }
         )
@@ -1051,6 +567,7 @@ class ImageGenerationPageAPI:
         """Return directories that Page-managed result files must live in."""
         return [
             self.plugin.image_temp_dir.resolve(),
+            self.plugin.persisted_image_dir.resolve(),
             self.plugin.astrbot_temp_dir.resolve(),
         ]
 
@@ -1338,7 +855,7 @@ class ImageGenerationPageAPI:
         )
         if not image_data:
             return error_response("上传文件不是受支持的图片", status_code=400)
-        suffix = PAGE_IMAGE_EXTENSIONS.get(image_data.mime_type, ".png")
+        suffix = GENERATED_IMAGE_EXTENSIONS.get(image_data.mime_type, ".png")
         digest = hashlib.md5(data).hexdigest()[:12]
         token = (
             f"upload_{int(asyncio.get_running_loop().time() * 1000)}_{digest}{suffix}"
@@ -1348,6 +865,7 @@ class ImageGenerationPageAPI:
             target.relative_to(self.plugin.page_upload_dir.resolve())
         except ValueError:
             return error_response("上传路径无效", status_code=400)
+        self.plugin.page_upload_dir.mkdir(parents=True, exist_ok=True)
         with target.open("wb") as output:
             output.write(data)
         return json_response(
@@ -1462,13 +980,16 @@ class ImageGenerationPageAPI:
         model = str(payload.get("model") or "").strip()
         presets = payload.get("presets") or None
         personas = payload.get("personas") or None
-        selected_provider = plugin.config_manager.adapter_config
-        if model and model != (
-            f"{selected_provider.name}/{selected_provider.model}"
-            if selected_provider
-            else ""
-        ):
-            selected_provider = next(
+        # Validate against the model picked in the form, and only switch the
+        # active model once the request is accepted, so rejected input never
+        # changes the persisted model selection.
+        adapter_config = plugin.config_manager.adapter_config
+        current_model = (
+            f"{adapter_config.name}/{adapter_config.model}" if adapter_config else ""
+        )
+        switch_model = bool(model) and model != current_model
+        if switch_model:
+            adapter_config = next(
                 (
                     provider
                     for provider in getattr(
@@ -1486,15 +1007,17 @@ class ImageGenerationPageAPI:
                 ),
                 None,
             )
-        selected_is_novelai = bool(
-            selected_provider and selected_provider.type == AdapterType.NOVELAI
-        )
-        if novelai and not selected_is_novelai:
+            if not adapter_config:
+                return error_response(f"未知模型: {model}", status_code=400)
+        is_novelai = bool(adapter_config and adapter_config.type == AdapterType.NOVELAI)
+        if novelai and not is_novelai:
             return error_response("当前模型不支持 NovelAI 高级参数", status_code=400)
         upload_tokens = payload.get("reference_tokens")
         if upload_tokens is None:
             upload_tokens = []
-        if selected_is_novelai:
+        if is_novelai:
+            # NovelAI uses one explicit source image; stale tokens must fail loudly
+            # instead of silently turning an edit into text-to-image.
             if not isinstance(upload_tokens, list) or any(
                 not isinstance(token, str) or not token for token in upload_tokens
             ):
@@ -1517,25 +1040,10 @@ class ImageGenerationPageAPI:
                 for token in upload_tokens
                 if (path := self._uploaded_image_path(str(token)))
             ]
-        if model and model != (
-            f"{plugin.config_manager.adapter_config.name}/{plugin.config_manager.adapter_config.model}"
-            if plugin.config_manager.adapter_config
-            else ""
-        ):
-            plugin.config_manager.save_model_setting(model)
-            plugin.config_manager.reload()
-            plugin.reload_runtime_settings()
-            if plugin.generator and plugin.config_manager.adapter_config:
-                await plugin.generator.update_adapter(
-                    plugin.config_manager.adapter_config
-                )
-                plugin.generation_executor.update_generator(plugin.generator)
 
         image_size = None
         has_width = "width" in payload
         has_height = "height" in payload
-        adapter_config = plugin.config_manager.adapter_config
-        is_novelai = bool(adapter_config and adapter_config.type == AdapterType.NOVELAI)
         if has_width != has_height:
             return error_response("图片宽度和高度必须同时指定", status_code=400)
         if (has_width or has_height) and not is_novelai:
@@ -1568,6 +1076,9 @@ class ImageGenerationPageAPI:
                     status_code=400,
                 )
             image_size = (width, height)
+
+        if switch_model:
+            await plugin.switch_generation_model(model)
 
         # Page generation runs from Dashboard auth context. Prefer the signed-in
         # WebUI username so overview statistics can attribute tasks correctly.
@@ -1604,5 +1115,38 @@ class ImageGenerationPageAPI:
                 "message": result.message,
                 "task_id": result.task_id,
                 "task": self._page_task_payload(record) if record else None,
+            }
+        )
+
+    async def page_switch_model(self):
+        """Switch the active generation model from the Dashboard Page.
+
+        Persists the chosen model and reloads the runtime helpers so later
+        requests use it, without submitting a generation task.
+
+        Returns:
+            A JSON response with the model now in use, or an error response.
+        """
+        plugin = self.plugin
+        payload = await request.json(default={})
+        if not isinstance(payload, dict):
+            return error_response("请求体必须是 JSON 对象", status_code=400)
+        model = str(payload.get("model") or "").strip()
+        if not model:
+            return error_response("缺少 model 参数", status_code=400)
+
+        adapter_config = plugin.config_manager.adapter_config
+        if model not in self._available_models():
+            return error_response(f"未知模型: {model}", status_code=400)
+
+        current_model = (
+            f"{adapter_config.name}/{adapter_config.model}" if adapter_config else ""
+        )
+        if model != current_model:
+            await plugin.switch_generation_model(model)
+        return json_response(
+            {
+                "current_model": model,
+                "switched": model != current_model,
             }
         )

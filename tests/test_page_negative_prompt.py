@@ -19,6 +19,7 @@ class PageNegativePromptTest(unittest.IsolatedAsyncioTestCase):
         for suffix in (
             "",
             "core",
+            "core.adapters",
             "core.page",
             "core.shared",
             "core.tasks",
@@ -37,9 +38,21 @@ class PageNegativePromptTest(unittest.IsolatedAsyncioTestCase):
         web.error_response = lambda message, **kwargs: {"error": message, **kwargs}
         web.file_response = MagicMock()
         modules.update({"astrbot.api": api, "astrbot.api.web": web})
-        with patch.dict(sys.modules, modules):
-            page_module = importlib.import_module(f"{namespace}.core.page.api")
-            shared = importlib.import_module(f"{namespace}.core.shared.types")
+        # The page imports image helpers and the adapter factory; stub the
+        # AstrBot runtime modules they touch at import time.
+        for name in (
+            "astrbot.api.message_components",
+            "astrbot.core.utils.astrbot_path",
+            "astrbot.core.utils.io",
+        ):
+            modules[name] = MagicMock()
+        # Keep the stubs installed for the whole test: the adapter factory used by
+        # page state imports adapter modules lazily.
+        patcher = patch.dict(sys.modules, modules)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        page_module = importlib.import_module(f"{namespace}.core.page.api")
+        shared = importlib.import_module(f"{namespace}.core.shared.types")
         self.request = web.request
         self.AdapterType = shared.AdapterType
         self.AdapterConfig = shared.AdapterConfig
@@ -85,6 +98,9 @@ class PageNegativePromptTest(unittest.IsolatedAsyncioTestCase):
                 )
             ),
             has_required_api_key=lambda: True,
+            switch_generation_model=AsyncMock(
+                side_effect=lambda model: config.save_model_setting(model)
+            ),
         )
         self.page = page_module.ImageGenerationPageAPI(self.plugin)
 
@@ -146,7 +162,7 @@ class PageNegativePromptTest(unittest.IsolatedAsyncioTestCase):
             )
         ]
         result = await self.page.page_state()
-        settings = result["model_settings"]
+        settings = result["model_capabilities"]
         for adapter_type in (
             self.AdapterType.NOVELAI,
             self.AdapterType.SILICONFLOW,
@@ -162,7 +178,10 @@ class PageNegativePromptTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             settings["openai_chat/image"]["negative_prompt_mode"], "prompt"
         )
-        self.assertTrue(settings["Provider/image"]["supports_negative_prompt"])
+        # The active model is no longer listed, so the page falls back to the
+        # top-level flags of the running adapter.
+        self.assertNotIn("Provider/image", settings)
+        self.assertIn("supports_negative_prompt", result)
 
     async def test_openai_pair_preserves_prompt_and_negative_request_modes(self):
         """Forward one prompt pair without changing provider defaults or modes."""
@@ -182,7 +201,9 @@ class PageNegativePromptTest(unittest.IsolatedAsyncioTestCase):
                 self.plugin.config_manager._all_provider_configs = [provider]
                 state = await self.page.page_state()
                 self.assertEqual(
-                    state["model_settings"]["Provider/image"]["negative_prompt_mode"],
+                    state["model_capabilities"]["Provider/image"][
+                        "negative_prompt_mode"
+                    ],
                     mode,
                 )
                 for value in (None, "watermark, text", ""):

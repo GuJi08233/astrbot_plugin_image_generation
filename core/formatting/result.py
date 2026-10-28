@@ -15,8 +15,8 @@ from ..config.manager import (
     RESULT_INFO_USAGE,
 )
 from ..shared.constants import UNSPECIFIED_OPTION
-from ..tasks.models import GenerationTaskItemStatus, GenerationTaskStatus
 from ..shared.logging import log_prefix, safe_log_text
+from ..tasks.models import GenerationTaskItemStatus, GenerationTaskStatus
 
 if TYPE_CHECKING:
     from ..config.manager import ConfigManager
@@ -241,6 +241,12 @@ def format_task_detail(record: GenerationTaskRecord) -> str:
             time_parts.append(f"执行 {duration:.2f}s")
     lines.append("- 时间：" + " ｜ ".join(time_parts))
 
+    if not record.is_active:
+        delivery_label = "已通知用户" if record.delivered else "尚未通知用户"
+        if record.delivered and record.delivered_paths:
+            delivery_label += f"（{len(record.delivered_paths)}张）"
+        lines.append(f"- 送达：{delivery_label}")
+
     if record.message and record.message not in {"任务已提交", "任务运行中"}:
         lines.append(f"- 当前：{safe_log_text(record.message, 80)}")
     if record.error:
@@ -313,6 +319,10 @@ def format_image_command_help(config_manager: ConfigManager) -> str:
         "",
         "指令列表:",
         "/生图 [预设/人设] [提示词] [数量]",
+        "尺寸示例: /生图 猫，比例 16:9，分辨率 2K 3",
+        "末尾简写: /生图 猫 16:9 2K 3（数量放最后）",
+        "尺寸优先级: 本次指定 > 高级预设 > 默认配置",
+        "无效或冲突尺寸会提示修改；粘连词和无法识别的末尾简写留在提示词中。",
         "/生图模型 - 查看或切换模型",
         "/生图任务 [编号或任务ID] - 查看正在进行的任务",
         "/生图取消 <编号或任务ID> - 取消指定任务",
