@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 from datetime import datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from astrbot.api.web import (
     json_response,
     request,
 )
+from PIL import Image
 
 from ..adapters.generator import create_adapter
 from ..generation.image_processor import GENERATED_IMAGE_EXTENSIONS
@@ -31,6 +33,7 @@ from .stats import PageStatsMixin
 
 PLUGIN_NAME = "astrbot_plugin_image_generation"
 PAGE_PREVIEW_MAX_BYTES = 12 * 1024 * 1024
+PAGE_PREVIEW_MAX_SIDE = 1024
 LOG = log_prefix("Page")
 
 
@@ -465,8 +468,26 @@ class ImageGenerationPageAPI(PagePayloadMixin, PageStatsMixin):
                     "size": size,
                 },
             )
-        mime_type = self._page_image_mime_type(path)
-        data = path.read_bytes()
+
+        # Previews cross the iframe bridge as base64 strings, so shipping the
+        # original 2K/4K file stalls both the dashboard and the page. Downscale
+        # to a WebP that still fills the lightbox; downloads keep the original.
+        def encode_preview() -> tuple[bytes, str]:
+            try:
+                with Image.open(path) as img:
+                    img.thumbnail((PAGE_PREVIEW_MAX_SIDE, PAGE_PREVIEW_MAX_SIDE))
+                    if img.mode not in ("RGB", "RGBA"):
+                        img = img.convert("RGBA")
+                    output = BytesIO()
+                    img.save(output, format="WEBP", quality=85)
+                    return output.getvalue(), "image/webp"
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    f"{LOG} 预览图压缩失败，回退原图: {safe_log_text(str(exc))}"
+                )
+                return path.read_bytes(), self._page_image_mime_type(path)
+
+        data, mime_type = await asyncio.to_thread(encode_preview)
         return json_response(
             {
                 "task_id": normalized_task_id,

@@ -116,6 +116,7 @@ function entryNotes(entry) {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
   padding: 12px 14px;
   border: 1px solid rgba(var(--v-theme-on-surface), 0.12);
   border-radius: 8px;
@@ -132,6 +133,17 @@ function entryNotes(entry) {
   justify-content: space-between;
   gap: 8px;
   font-size: 0.85rem;
+}
+
+/* Generated file names have no spaces; let them break so the status chip
+   stays inside the card. */
+.audit-card__head strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.audit-card__head .v-chip {
+  flex-shrink: 0;
 }
 
 .audit-score {

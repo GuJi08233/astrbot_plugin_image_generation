@@ -1,5 +1,7 @@
 ### 更新日志
 - **未发布**
+  - 修复 WebUI 点击卡顿数秒的问题：图片预览接口原本把原图整张转 base64 经 iframe 桥接传输，图库一次并发加载 48 张时会占满面板主线程；现改为在后台线程缩放到最长边 1024 的 WebP 后再返回，下载仍为原图，解码失败时回退原图。
+  - 修复审核详情卡片中无空格的长文件名把「通过/已拦截」标签挤出卡片的问题。
   - 合并上游 v1.8.4：同步速率限制、额度预占、重复投递、AI 自主投递、预设模板、ComfyUI、GPT Image 2/2.5、Seedream 5.0 等更新；Jimeng2API 随上游移除。
   - WebUI 改用上游 Vue 3 + Vuetify 页面，并移植 fork 功能：反向提示词输入、NovelAI 手动宽高与高级设置（生成模式、采样/多角色 JSON、蒙版、精确参考、Vibe 与 `.naiv4vibe` 导入）、审核详情、审核测试、任务/图片复审、删除与清理已结束任务。
   - `page/state` 的 `model_capabilities` 新增 `adapter_type`、`model`、`supports_negative_prompt`、`supports_novelai`、`negative_prompt_mode` 和 NovelAI 默认宽高，反向词支持改为读取适配器声明的能力，不再维护固定适配器列表。
